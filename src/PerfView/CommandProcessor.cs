@@ -787,7 +787,11 @@ namespace PerfView
                                 //     new Guid("83ED54F0-4D48-4E45-B16E-726FFD1FA4AF"), (TraceEventLevel)255, 0);
 
                                 EnableUserProvider(userModeSession, "Microsoft-Windows-RPC",
+<<<<<<< HEAD
                                     new Guid("6AD52B32-D609-4BE9-AE07-CE8DAE937E39"), TraceEventLevel.Informational, 0, options);
+=======
+                                    new Guid("6AD52B32-D609-4BE9-AE07-CE8DAE937E39"), TraceEventLevel.Informational, 0);
+>>>>>>> Fixes, including adding snupkg support for TraceEvent
 
                                 // This is what WPA turns on in its 'GENERAL' setting  
                                 //Microsoft-Windows-Immersive-Shell: 0x0000000000100000: 0x04
