@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package>
+  <metadata minClientVersion="2.5">
+    <id>Microsoft.Diagnostics.FastSerialization</id>
+    <version>0.0.0</version>
+    <title>Microsoft FastSerialization Library</title>
+    <authors>Microsoft</authors>
+    <owners>Microsoft</owners>
+    <projectUrl>https://github.com/Microsoft/perfview</projectUrl>
+    <licenseUrl>https://github.com/Microsoft/perfview/blob/master/LICENSE.TXT</licenseUrl>
+    <iconUrl>http://go.microsoft.com/fwlink/?LinkID=288859</iconUrl>
+    <requireLicenseAcceptance>true</requireLicenseAcceptance>
+    <description>TODO</description>
+    <summary>TODO</summary>
+    <releaseNotes>https://github.com/Microsoft/perfview/releases/tag/T$version$</releaseNotes>
+    <copyright>© Microsoft Corporation. All rights reserved.</copyright>
+    <tags>TODO</tags>
+  </metadata>
+</package>

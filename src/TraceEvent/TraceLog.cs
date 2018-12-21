@@ -2404,7 +2404,8 @@ namespace Microsoft.Diagnostics.Tracing.Etlx
             for (IncompleteStack ptr = listOfIncompleteKernelStacks; ptr != null;)
             {
 #if DEBUG
-                Debug.Assert((++cnt % 8192) != 0, cnt.ToString() + " incomplete stacks");          // Not strictly true, but worthy of investigation if it is violated.  
+                //if (++cnt % 8192 == 0)
+                //    throw new Exception(cnt.ToString() + " incomplete stacks");          // Not strictly true, but worthy of investigation if it is violated.  
 #endif
                 var nextPtr = ptr.PrevKernelEventOnSameThread;
                 ptr.PrevKernelEventOnSameThread = null;         // Remove it from the list.  

@@ -13,6 +13,7 @@
     <Copyright>Copyright © Microsoft 2010</Copyright>
   </PropertyGroup>
 
+  <!--
   <Choose>
     <When Condition="'$(TargetFramework)' == 'netstandard1.3'">
       <ItemGroup>
@@ -21,13 +22,12 @@
       </ItemGroup>
     </When>
   </Choose>
-
   <PropertyGroup>
     <DefineConstants>$(DefineConstants);GROWABLEARRAY_PUBLIC;STREAMREADER_PUBLIC;FASTSERIALIZATION_PUBLIC</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- *** SourceLink Support *** -->
+    <!-- *** SourceLink Support *** -- >
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.0.0-beta-63127-02" PrivateAssets="All" />
   </ItemGroup>
 
@@ -40,11 +40,12 @@
     <PackageReference Include="MicroBuild.Core" Version="0.2.0" />
   </ItemGroup>
 
-  <!-- .NET Strong Name Signing -->
+  <!-- .NET Strong Name Signing - ->
   <PropertyGroup>
     <SignAssembly Condition="'$(SIGNING_BUILD)'!= ''">true</SignAssembly>
     <DelaySign>true</DelaySign>
     <AssemblyOriginatorKeyFile>..\MSFT.snk</AssemblyOriginatorKeyFile>
   </PropertyGroup>
 
+  -->
 </Project>

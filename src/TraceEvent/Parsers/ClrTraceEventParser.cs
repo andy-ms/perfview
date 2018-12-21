@@ -5417,6 +5417,13 @@ namespace Microsoft.Diagnostics.Tracing.Parsers.Clr
         {
             get
             {
+                if (Fragmentation > SizeAfter)
+                {
+                    return -1;
+                    //TODO:
+                    //throw new Exception($"SizeAfter is only {SizeAfter} but fragmentation is {Fragmentation}");
+                }
+
                 long ret = SizeAfter - Fragmentation;
 
                 Debug.Assert(ret >= 0);

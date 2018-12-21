@@ -2628,7 +2628,7 @@ namespace Microsoft.Diagnostics.Tracing
             var templateState = StateObject;
             EnumerateTemplates(eventsToObserve, delegate (TraceEvent template)
             {
-                Subscribe(newSubscription, template, templateState, false);
+                Subscribe(newSubscription, template, templateState, mayHaveExistedBefore: true);
             });
         }
 
@@ -3000,6 +3000,10 @@ namespace Microsoft.Diagnostics.Tracing
                     for (int i = 0; i < cur.m_activeSubscriptions.Count; i++)
                     {
                         var activeSubscription = cur.m_activeSubscriptions[i];
+                        if (activeSubscription.Matches(templateWithCallback))
+                        {
+                            throw new Exception("BOO -- mayHaveExistedBefore is false, but it does exist!");
+                        }
                         Debug.Assert(!activeSubscription.Matches(templateWithCallback));
                     }
                 }
@@ -3422,7 +3426,8 @@ namespace Microsoft.Diagnostics.Tracing
             {
                 Debug.WriteLine("Error: exception thrown during callback.  Will be swallowed!");
                 Debug.WriteLine("Exception: " + e.Message);
-                Debug.Assert(false, "Thrown exception " + e.GetType().Name + " '" + e.Message + "'");
+                throw;
+                //Debug.Assert(false, "Thrown exception " + e.GetType().Name + " '" + e.Message + "'");
             }
 #endif
         }

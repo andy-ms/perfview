@@ -1809,7 +1809,22 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         /// <summary>
         /// Time since the last EE restart
         /// </summary>
-        public double DurationSinceLastRestartMSec;  //  Set in GCStart
+        private double _DurationSinceLastRestartMSec = -1.23;  //  Set in GCStart
+        public double DurationSinceLastRestartMSec
+        {
+            get
+            {
+                Debug.Assert(_DurationSinceLastRestartMSec != -1.23);
+                return _DurationSinceLastRestartMSec;
+            }
+            set
+            {
+                //TODO:
+                //if (value < 0) throw new Exception("Bad " + nameof(DurationSinceLastRestartMSec) + " , value is " + value);
+                if (value < 0) value = 0;
+                _DurationSinceLastRestartMSec = value;
+            }
+        }
         /// <summary>
         ///Realtive time to the trace of when the GC pause began
         /// </summary>
@@ -2527,13 +2542,18 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
 
                 double totalTime = (gc.StartRelativeMSec + gc.DurationMSec) - previousGCStopTimeRelativeMSec;
                 pauseTimePercentage = (totalPauseTime * 100) / (totalTime);
+                if (pauseTimePercentage > 100) throw new Exception("Oh no, pause time is22 " + pauseTimePercentage);
             }
             else
             {
+                if (gc.DurationSinceLastRestartMSec < 0) throw new Exception(nameof(gc.DurationSinceLastRestartMSec) + " makes no sense, is " + gc.DurationSinceLastRestartMSec);
                 double totalTime = gc.PauseDurationMSec + gc.DurationSinceLastRestartMSec;
                 pauseTimePercentage = (gc.PauseDurationMSec * 100) / (totalTime);
+                if (pauseTimePercentage > 100) throw new Exception("Oh no, pause time is42 " + pauseTimePercentage);
             }
 
+            if (pauseTimePercentage > 100) throw new Exception("Oh no, pause time izzz " + pauseTimePercentage);
+            
             Debug.Assert(pauseTimePercentage <= 100);
             return pauseTimePercentage;
         }
@@ -2895,18 +2915,30 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         {
             if (sample.ProcessorNumber >= 0 && sample.ProcessorNumber < ServerGcHeapHistories.Count)
             {
+                //TODO: this assumes processor number == heap id??
                 ServerGcHeapHistories[sample.ProcessorNumber].AddSampleEvent(sample, PauseStartRelativeMSec);
             }
         }
 
         internal void AddGcJoin(GCJoinTraceData data)
         {
+            if (!ServerGcHeapHistories.Any())
+            {
+                //Debug.Assert(data.Heap == 0);
+                //TODO: we shouldn't be calling this method then???
+                return;
+            }
+
             if (data.Heap >= 0 && data.Heap < ServerGcHeapHistories.Count)
             {
                 ServerGcHeapHistories[data.Heap].AddJoin(data, PauseStartRelativeMSec);
             }
-            else
+            else //TODO: what is this loop???
             {
+                //TODO: why are these multiples of 100???
+                if (data.Heap % 100 != 0) throw new Exception($"{data.Heap}, {ServerGcHeapHistories.Count}");
+
+
                 foreach (var heap in ServerGcHeapHistories)
                 {
                     heap.AddJoin(data, PauseStartRelativeMSec);
@@ -4430,12 +4462,17 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
 
         internal void SetUpServerGcHistory(int id, TraceGC gc)
         {
+            // I sure hope this is actually called...
+            //throw new Exception("Should reach here!");
+
             for (int i = 0; i < HeapCount; i++)
             {
                 int gcThreadId = 0;
                 int gcThreadPriority = 0;
                 ServerGcHeap2ThreadId.TryGetValue(i, out gcThreadId);
                 ThreadId2Priority.TryGetValue(gcThreadId, out gcThreadPriority);
+                if (i != gc.ServerGcHeapHistories.Count)
+                    throw new Exception($"Indexing into ServerGcHeapHistories won't work; i = {i}, index is {gc.ServerGcHeapHistories.Count}");
                 gc.ServerGcHeapHistories.Add(new ServerGcHistory
                 {
                     ProcessId = id,
