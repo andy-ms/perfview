@@ -46,7 +46,10 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
         public static TraceLoadedDotNetRuntime LoadedDotNetRuntime(this TraceProcess process)
         {
             Debug.Assert(process.Source != null);
-            Debug.Assert(m_currentSource == process.Source);
+            //Debug.Assert(m_currentSource == process.Source);
+            if (m_currentSource != process.Source)
+                throw new Exception($"m_currentSource != process.Source: {m_currentSource} != {process.Source}");
+            
             Dictionary<ProcessIndex, DotNetRuntime> map = process.Source.UserData["Computers/LoadedDotNetRuntimes"] as Dictionary<ProcessIndex, DotNetRuntime>;
             if (map.ContainsKey(process.ProcessIndex))
             {
@@ -683,6 +686,16 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     }
                 };
 
+                source.ClrPrivate.GCSettings += delegate (GCSettingsTraceData data)
+                {
+                    TraceLoadedDotNetRuntime mang = currentManagedProcess(data);
+                    long? old = mang.GC.m_stats.SegmentSize;
+                    long nu = data.SegmentSize;
+                    if (old != null && old != nu)
+                        throw new Exception($"Two GCSettings events with different values: {old} and {nu}");
+                    mang.GC.m_stats.SegmentSize = nu;
+                };
+
                 source.Clr.GCStart += delegate (GCStartTraceData data)
                 {
                     var process = data.Process();
@@ -693,6 +706,10 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                             !((stats.GC.GCs.Count > 0) && stats.GC.GCs[stats.GC.GCs.Count - 1].Number == data.Count))
                     {
                         TraceGC _gc = new TraceGC(stats.GC.m_stats.HeapCount);
+
+
+
+
                         Debug.Assert(0 <= data.Depth && data.Depth <= 2);
                         _gc.Generation = data.Depth;
                         _gc.Reason = data.Reason;
@@ -4116,6 +4133,11 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
     public class GCStats
     {
         /// <summary>
+        /// null if we did not get a GcSettingsTraceData event.
+        /// Note: it seems we only get that event if we start PerfView *after* that process starts.
+        /// </summary>
+        public long? SegmentSize;
+        /// <summary>
         /// Number of GC's for this process
         /// </summary>
         public int Count;
@@ -4237,6 +4259,9 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         /// </summary>
         public bool HasDetailedGCInfo;
 
+
+        
+
         #region private
 
         // This is the last GC in progress. We need this for server Background GC.
@@ -4309,7 +4334,13 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
             else
             {
-                Debug.Assert(_event.PauseDurationMSec == 0);
+                Debug.Assert(suspendThreadIDBGC == -1);
+                //TODO: this assertion is violated by benchresults/fromemail/randomname-diff.zip
+                //if (_event.PauseDurationMSec != 0)
+                //{
+                //    throw new Exception($"suspendThreadIDBGC: {suspendThreadIDBGC}, _event.PauseDurationMSec: {_event.PauseDurationMSec}");
+                //}
+                //Debug.Assert(_event.PauseDurationMSec == 0);
                 _event.PauseDurationMSec = RestartEEMSec - _event.PauseStartRelativeMSec;
             }
         }

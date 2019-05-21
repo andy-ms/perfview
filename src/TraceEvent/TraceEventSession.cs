@@ -828,12 +828,12 @@ namespace Microsoft.Diagnostics.Tracing.Session
 
                 m_Stopped = true;
 
-                try
-                {
+                //try
+                //{
                     // Do this first because we look for active sessions to clean up.   
                     CleanFilterDataForEtwSession();                                      // Remove any filter data associated with the session. 
-                }
-                catch (Exception) { Debug.Assert(false); }
+                //}
+                //catch (Exception) { Debug.Assert(false); }
 
                 ETWControl.SetCpuSamplingRate(10000);      // Set sample rate back to default 1 Msec 
                 var propertiesBuff = stackalloc byte[PropertiesSize];

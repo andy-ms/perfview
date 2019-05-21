@@ -175,6 +175,20 @@ namespace Microsoft.Diagnostics.Tracing
             }
         }
 
+        //TODO: make internal somehow
+        public ClrPrivateTraceEventParser ClrPrivate
+        {
+            get
+            {
+                if (_CLR_Private == null)
+                {
+                    _CLR_Private = new ClrPrivateTraceEventParser(this);
+                }
+
+                return _CLR_Private;
+            }
+        }
+
         /// <summary>
         /// For convenience, we provide a property returns a KernelTraceEventParser that knows 
         /// how to parse all the Kernel events into callbacks.
@@ -420,6 +434,7 @@ namespace Microsoft.Diagnostics.Tracing
         internal /*protected*/ long sessionEndTimeQPC;
         internal /*protected*/ bool useClassicETW;
         internal /*protected*/ ClrTraceEventParser _CLR;
+        internal /*protected*/ ClrPrivateTraceEventParser _CLR_Private;
         internal /*protected*/ KernelTraceEventParser _Kernel;
 #if !NOT_WINDOWS && !NO_DYNAMIC_TRACEEVENTPARSER
         internal /*protected*/ DynamicTraceEventParser _Dynamic;

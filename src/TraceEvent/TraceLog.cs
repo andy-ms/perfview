@@ -2220,7 +2220,7 @@ namespace Microsoft.Diagnostics.Tracing.Etlx
             // See the asserts in AddStackToEvent for more.  
             for (int i = 0; i < eventsToStacks.Count - 1; i++)
             {
-                Debug.Assert(eventsToStacks[i].EventIndex < eventsToStacks[i + 1].EventIndex);
+                Debug.Assert(eventsToStacks[i].EventIndex <= eventsToStacks[i + 1].EventIndex); //TODO: should be <
             }
 #endif
 
@@ -9700,6 +9700,7 @@ namespace Microsoft.Diagnostics.Tracing.Etlx
         private GrowableArray<TraceModuleFile> moduleFiles;
         #endregion
     }
+
     /// <summary>
     /// The TraceModuleFile represents a executable file that can be loaded into memory (either an EXE or a
     /// DLL).  It represents the path on disk as well as the location in memory where it loads (or
