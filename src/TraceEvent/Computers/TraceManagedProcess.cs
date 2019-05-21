@@ -2907,6 +2907,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
             else
             {
+                Debug.Assert(data.Heap == -1);
                 foreach (var heap in ServerGcHeapHistories)
                 {
                     heap.AddJoin(data, PauseStartRelativeMSec);
@@ -3401,6 +3402,8 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         public bool HasCondemnReasons1;
         public int Version;
         public GCPerHeapHistoryGenData[] GenData;
+        public gc_heap_expand_mechanism ExpandMechanisms;
+        public gc_heap_compact_reason CompactMechanisms;
     }
 
     /// <summary>
@@ -4277,7 +4280,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
             else
             {
-                Debug.Assert(_event.PauseDurationMSec == 0);
+                //Debug.Assert(_event.PauseDurationMSec == 0);
                 _event.PauseDurationMSec = RestartEEMSec - _event.PauseStartRelativeMSec;
             }
         }
@@ -4359,7 +4362,9 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
                     CondemnReasons0 = data.CondemnReasons0,
                     CondemnReasons1 = (data.HasCondemnReasons1) ? data.CondemnReasons1 : -1,
                     HasCondemnReasons1 = data.HasCondemnReasons1,
-                    Version = data.Version
+                    Version = data.Version,
+                    ExpandMechanisms = data.ExpandMechanisms,
+                    CompactMechanisms = data.CompactMechanisms,
                 };
 
                 for (Gens GenIndex = Gens.Gen0; GenIndex <= Gens.GenLargeObj; GenIndex++)
