@@ -4274,7 +4274,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             {
                 if (proc.GC.m_stats.lastCompletedGC != null)
                 {
-                    Debug.Assert(proc.GC.m_stats.lastCompletedGC.Type == GCType.BackgroundGC);
+                    //Debug.Assert(proc.GC.m_stats.lastCompletedGC.Type == GCType.BackgroundGC);
                     _event = proc.GC.m_stats.lastCompletedGC;
                 }
             }
