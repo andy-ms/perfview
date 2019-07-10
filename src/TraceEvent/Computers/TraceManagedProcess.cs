@@ -412,7 +412,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                         {
                             if ((_gc.Type != GCType.BackgroundGC) && (mang.GC.m_stats.IsServerGCUsed == 1))
                             {
-                                _gc.AddServerGcThreadSwitch(new ThreadWorkSpan(data), isBackgroundThread: false);
+                                _gc.AddServerGcThreadSwitch(new ThreadWorkSpan(data), isBGCThread: mang.GC.m_stats.IsBGCThread(data.OldThreadID));
                             }
                         }
                     }
@@ -437,7 +437,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                             {
                                 if ((e.Type != GCType.BackgroundGC) && (tmpMang.GC.m_stats.IsServerGCUsed == 1))
                                 {
-                                    e.AddServerGcSample(new ThreadWorkSpan(data), isBackgroundThread: false);
+                                    e.AddServerGcSample(new ThreadWorkSpan(data), isBGCThread: false);
                                     loadedRuntime = tmpMang;
                                     gcProcess = proc;
                                 }
@@ -573,19 +573,18 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     _gc.Index = stats.GC.GCs.Count;
                     stats.GC.GCs.Add(_gc);
 
-                    // Can't test `(_gc.Type != GCType.BackgroundGC) &&` here, we'll just have to add it unconditionally ...
-                    if ((stats.GC.m_stats.IsServerGCUsed == 1))
+                    if (stats.GC.m_stats.IsServerGCUsed == 1)
                     {
                         stats.GC.m_stats.SetUpServerGcHistory(process.ProcessID, _gc);
-                        bool isBackgroundThread(ThreadWorkSpan s) => stats.GC.m_stats.IsBGCThread(s.ThreadId);
+                        bool isBGCThread(ThreadWorkSpan s) => stats.GC.m_stats.IsBGCThread(s.ThreadId);
                         foreach (var s in RecentCpuSamples)
                         {
-                            _gc.AddServerGcSample(s, isBackgroundThread: isBackgroundThread(s));
+                            _gc.AddServerGcSample(s, isBGCThread: isBGCThread(s));
                         }
 
                         foreach (var s in RecentThreadSwitches)
                         {
-                            _gc.AddServerGcThreadSwitch(s, isBackgroundThread: isBackgroundThread(s));
+                            _gc.AddServerGcThreadSwitch(s, isBGCThread: isBGCThread(s));
                         }
                     }
                 };
@@ -2942,19 +2941,19 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
         }
 
-        internal void AddServerGcThreadSwitch(ThreadWorkSpan cswitch, bool isBackgroundThread)
+        internal void AddServerGcThreadSwitch(ThreadWorkSpan cswitch, bool isBGCThread)
         {
             if (cswitch.ProcessorNumber >= 0 && cswitch.ProcessorNumber < ServerGcHeapHistories.Count)
             {
-                ServerGcHeapHistories[cswitch.ProcessorNumber].AddSwitchEvent(cswitch, PauseStartRelativeMSec, isBackgroundThread: isBackgroundThread);
+                ServerGcHeapHistories[cswitch.ProcessorNumber].AddSwitchEvent(cswitch, PauseStartRelativeMSec, isBGCThread: isBGCThread);
             }
         }
 
-        internal void AddServerGcSample(ThreadWorkSpan sample, bool isBackgroundThread)
+        internal void AddServerGcSample(ThreadWorkSpan sample, bool isBGCThread)
         {
             if (sample.ProcessorNumber >= 0 && sample.ProcessorNumber < ServerGcHeapHistories.Count)
             {
-                ServerGcHeapHistories[sample.ProcessorNumber].AddSampleEvent(sample, PauseStartRelativeMSec, isBackgroundThread: isBackgroundThread);
+                ServerGcHeapHistories[sample.ProcessorNumber].AddSampleEvent(sample, PauseStartRelativeMSec, isBGCThread: isBGCThread);
             }
         }
 
@@ -2964,14 +2963,14 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             bool sanityCheck = isRestart == (data.Heap == 100 || data.Heap == 200);
             if (sanityCheck && data.Heap >= 0 && data.Heap < ServerGcHeapHistories.Count)
             {
-                ServerGcHeapHistories[data.Heap].AddJoin(data, PauseStartRelativeMSec, isBackground: isBackground);
+                ServerGcHeapHistories[data.Heap].AddJoin(data, PauseStartRelativeMSec, isBGCThread: isBackground);
             }
             else if (sanityCheck && isRestart)
             {
                 // restart
                 foreach (var heap in ServerGcHeapHistories)
                 {
-                    heap.AddJoin(data, PauseStartRelativeMSec, isBackground: isBackground);
+                    heap.AddJoin(data, PauseStartRelativeMSec, isBGCThread: isBackground);
                 }
             }
             else
@@ -3542,7 +3541,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
     public class GcJoin
     {
         public int ThreadId;
-        public bool IsBackgroundThread;
+        public bool IsBGCThread;
         public int Heap;
         public double RelativeTimestampMsc;
         public double AbsoluteTimestampMsc;
@@ -3572,7 +3571,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         #region private 
         //list of times in msc starting from GC start when GCJoin events were fired for this heap
 
-        internal void AddSampleEvent(ThreadWorkSpan sample, double pauseStartRelativeMSec, bool isBackgroundThread)
+        internal void AddSampleEvent(ThreadWorkSpan sample, double pauseStartRelativeMSec, bool isBGCThread)
         {
             GcWorkSpan lastSpan = SampleSpans.Count > 0 ? SampleSpans[SampleSpans.Count - 1] : null;
             if (lastSpan != null && lastSpan.ThreadId == sample.ThreadId && lastSpan.ProcessId == sample.ProcessId &&
@@ -3582,7 +3581,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
             else
             {
-                SampleSpans.Add(new GcWorkSpan(sample, isBackgroundThread)
+                SampleSpans.Add(new GcWorkSpan(sample, isBGCThread)
                 {
                     Type = GetSpanType(sample),
                     RelativeTimestampMsc = sample.AbsoluteTimestampMsc - pauseStartRelativeMSec,
@@ -3591,7 +3590,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
         }
 
-        internal void AddSwitchEvent(ThreadWorkSpan switchData, double pauseStartRelativeMSec, bool isBackgroundThread)
+        internal void AddSwitchEvent(ThreadWorkSpan switchData, double pauseStartRelativeMSec, bool isBGCThread)
         {
             GcWorkSpan lastSpan = SwitchSpans.Count > 0 ? SwitchSpans[SwitchSpans.Count - 1] : null;
             if (switchData.ThreadId == GcWorkingThreadId && switchData.ProcessId == ProcessId)
@@ -3609,7 +3608,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
                 lastSpan.WaitReason = switchData.WaitReason;
             }
 
-            SwitchSpans.Add(new GcWorkSpan(switchData, isBackgroundThread: isBackgroundThread)
+            SwitchSpans.Add(new GcWorkSpan(switchData, isBGCThread: isBGCThread)
             {
                 Type = GetSpanType(switchData),
                 RelativeTimestampMsc = switchData.AbsoluteTimestampMsc - pauseStartRelativeMSec,
@@ -3652,12 +3651,12 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         // we add them to every heap with the ProcessorNumber so we know which heap/processor it was 
         // fired on.
         // Also for these restart events, the id field is always -1.
-        internal void AddJoin(GCJoinTraceData data, double pauseStartRelativeMSec, bool isBackground)
+        internal void AddJoin(GCJoinTraceData data, double pauseStartRelativeMSec, bool isBGCThread)
         {
             GcJoins.Add(new GcJoin
             {
                 ThreadId = data.ThreadID,
-                IsBackgroundThread = isBackground,
+                IsBGCThread = isBGCThread,
                 Heap = data.ProcessorNumber,
                 AbsoluteTimestampMsc = data.TimeStampRelativeMSec,
                 RelativeTimestampMsc = data.TimeStampRelativeMSec - pauseStartRelativeMSec,
@@ -3683,12 +3682,12 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
     {
         public WorkSpanType Type;
         public double RelativeTimestampMsc;
-        public bool IsBackgroundThread;
+        public bool IsBGCThread;
 
-        public GcWorkSpan(ThreadWorkSpan span, bool isBackgroundThread)
+        public GcWorkSpan(ThreadWorkSpan span, bool isBGCThread)
             : base(span)
         {
-            IsBackgroundThread = isBackgroundThread;
+            IsBGCThread = isBGCThread;
         }
     }
 }
@@ -4476,16 +4475,12 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         // This records the amount of CPU time spent at the end of last GC.
         internal double ProcessCpuAtLastGC = 0;
 
-        [Obsolete]
         internal Dictionary<int, object> backgroundGCThreads = new Dictionary<int, object>();
         internal bool IsBGCThread(int threadID)
         {
-            if (backgroundGCThreads != null)
-            {
-                return backgroundGCThreads.ContainsKey(threadID);
-            }
-
-            return false;
+            bool res = backgroundGCThreads != null && backgroundGCThreads.ContainsKey(threadID);
+            // Debug.Assert(res || serverGCThreads.ContainsKey(threadID)); // Fails because serverGCThreads is set in the second GC?
+            return res;
         }
 
         // I keep this for the purpose of server Background GC. Unfortunately for server background 
