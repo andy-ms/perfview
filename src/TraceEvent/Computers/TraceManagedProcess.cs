@@ -574,6 +574,8 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                         gc.Index = mang.GC.GCs.Count;
                         mang.GC.GCs.Add(gc);
 
+                        // Ideally we would do this only for non-background GCs, but we don't have that information at this point
+                        // and we want SetUpServerGcHistory called immediately
                         if (mang.GC.m_stats.IsServerGCUsed == 1)
                         {
                             mang.GC.m_stats.SetUpServerGcHistory(process.ProcessID, gc);
@@ -643,16 +645,16 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                         {
                             if (!_gc.IsConcurrentGC)
                             {
-                                Debug.Assert(_gc.PauseDurationMSec == 0, "nonconcurrentgc should have 0 pauseduration");
+                                Debug.Assert(_gc.PauseDurationMSec == 0);
                             }
-                            Debug.Assert(_gc.PauseStartRelativeMSec != 0, "should have non0 pausestart");
+                            Debug.Assert(_gc.PauseStartRelativeMSec != 0);
                             // In 2.0 Concurrent GC, since we don't know the GC's type we can't tell if it's concurrent 
                             // or not. But we know we don't have nested GCs there so simply check if we have received the
                             // GCStop event; if we have it means it's a blocking GC; otherwise it's a concurrent GC so 
                             // simply add the pause time to the GC without making the GC complete.
                             if (_gc.DurationMSec == 0)
                             {
-                                Debug.Assert(_gc.is20Event, "is20event");
+                                Debug.Assert(_gc.is20Event);
                                 _gc.IsConcurrentGC = true;
                                 stats.GC.m_stats.AddConcurrentPauseTime(_gc, data.TimeStampRelativeMSec);
                             }
@@ -673,7 +675,8 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                             }
                         }
 
-                        // Note: there may be a few of these before the end of the GC, we're just hoping to correct it with the final GCRestartEEStop after the end of the GC
+                        // There may be a few of these before the end of the GC;
+                        // the final GCRestartEEStop after the end of the GC will be the final value of PauseEndRelativeMSec.
                         _gc.PauseEndRelativeMSec = data.TimeStampRelativeMSec;
                     }
 
@@ -725,6 +728,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                         _gc.Number = data.Count;
                         _gc.Type = data.Type;
                         _gc.is20Event = data.IsClassicProvider;
+                        Debug.Assert(_gc.SeenStartEvent);
                         bool isEphemeralGCAtBGCStart = false;
                         // Detecting the ephemeral GC that happens at the beginning of a BGC.
                         if (stats.GC.GCs.Count > 0)
@@ -881,11 +885,10 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
                     if (_gc != null)
                     {
-                        _gc.AddGcJoin(data, isBackground: stats.GC.m_stats.IsBGCThread(data.ThreadID));
+                        _gc.AddGcJoin(data, isBGCThread: stats.GC.m_stats.IsBGCThread(data.ThreadID));
                     }
                     else
                     {
-                        Console.WriteLine($"WARNING: Dropping join at {data.TimeStampRelativeMSec}, {data.JoinTime} {data.JoinType} heap {data.Heap}");
                         Debug.Fail("Every join should be associated with some GC");
                     }
                 };
@@ -1193,7 +1196,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
                     if (_gc != null)
                     {
-                        _gc.AddGcJoin(data, isBackground: stats.GC.m_stats.IsBGCThread(data.ThreadID));
+                        _gc.AddGcJoin(data, isBGCThread: stats.GC.m_stats.IsBGCThread(data.ThreadID));
                     }
                 };
 
@@ -1839,10 +1842,13 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         /// </summary>
         public double DurationSinceLastRestartMSec;  //  Set in GCStart
         /// <summary>
-        ///Realtive time to the trace of when the GC pause began
+        /// Relative time to the trace of when the GC pause began
         /// </summary>
         public double PauseStartRelativeMSec;        //  Set in GCStart (but usually determined by GCSuspendEEStart)
-        // TODO:DOC
+        /// <summary>
+        /// Relative time to the trace of the last time when the GC pause ended.
+        /// (If there are multiple pauses this will be the last one.)
+        /// </summary>
         public double PauseEndRelativeMSec; // Set in GCRestartEEStop
         /// <summary>
         /// Marks if the GC is in a completed state
@@ -2542,7 +2548,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
                 }
 
                 // Get the elapsed time since the previous GC finished.
-                Debug.Assert(GCs[gc.Index] == gc, "index is bad");
+                Debug.Assert(GCs[gc.Index] == gc);
                 int previousGCIndex = gc.Index - 1;
                 if (previousGCIndex >= 0 && !GCs[previousGCIndex].SeenStartEvent)
                 {
@@ -2560,20 +2566,18 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
                     previousGCStopTimeRelativeMSec = GCs[0].StartRelativeMSec;
                 }
 
-                Debug.Assert(previousGCStopTimeRelativeMSec <= gc.StartRelativeMSec, "previous stop is after current start");
+                Debug.Assert(previousGCStopTimeRelativeMSec <= gc.StartRelativeMSec);
 
                 double totalTime = (gc.StartRelativeMSec + gc.DurationMSec) - previousGCStopTimeRelativeMSec;
                 pauseTimePercentage = (totalPauseTime * 100) / (totalTime);
-                Debug.Assert(pauseTimePercentage <= 100, "A");
             }
             else
             {
                 double totalTime = gc.PauseDurationMSec + gc.DurationSinceLastRestartMSec;
                 pauseTimePercentage = (gc.PauseDurationMSec * 100) / (totalTime);
-                Debug.Assert(pauseTimePercentage <= 100, "B");
             }
 
-            Debug.Assert(pauseTimePercentage <= 100, "pause time percentage");
+            Debug.Assert(pauseTimePercentage <= 100);
             return pauseTimePercentage;
         }
 
@@ -2938,33 +2942,26 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
         }
 
-        internal void AddGcJoin(GCJoinTraceData data, bool isBackground)
+        internal void AddGcJoin(GCJoinTraceData data, bool isBGCThread)
         {
             bool isRestart = data.JoinType == GcJoinType.Restart;
-            bool sanityCheck = isRestart == (data.Heap == 100 || data.Heap == 200);
-            if (sanityCheck && data.Heap >= 0 && data.Heap < ServerGcHeapHistories.Count)
+            Debug.Assert(isRestart == (data.Heap == 100 || data.Heap == 200));
+            if (data.Heap >= 0 && data.Heap < ServerGcHeapHistories.Count)
             {
-                ServerGcHeapHistories[data.Heap].AddJoin(data, PauseStartRelativeMSec, isBGCThread: isBackground);
+                ServerGcHeapHistories[data.Heap].AddJoin(data, PauseStartRelativeMSec, isBGCThread: isBGCThread);
             }
-            else if (sanityCheck && isRestart)
+            else if (isRestart)
             {
                 // restart
                 foreach (var heap in ServerGcHeapHistories)
                 {
-                    heap.AddJoin(data, PauseStartRelativeMSec, isBGCThread: isBackground);
+                    heap.AddJoin(data, PauseStartRelativeMSec, isBGCThread: isBGCThread);
                 }
             }
             else
             {
-                if (sanityCheck && ServerGcHeapHistories.Count == 0)
-                {
-                    // ignore
-                    // Console.WriteLine("Ignoring join -- servergcheaphistories.count is 0");
-                }
-                else
-                {
-                    Debug.Assert(false);
-                }
+                // TODO: We should never even get here? If there's a join, there should be ServerGcHeapHistories
+                Debug.Assert(ServerGcHeapHistories.Count == 0);
             }
         }
 
@@ -4339,7 +4336,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
             else
             {
-                //Debug.Assert(_event.PauseDurationMSec == 0);
+                // Debug.Assert(_event.PauseDurationMSec == 0);
                 _event.PauseDurationMSec = RestartEEMSec - _event.PauseStartRelativeMSec;
             }
         }
