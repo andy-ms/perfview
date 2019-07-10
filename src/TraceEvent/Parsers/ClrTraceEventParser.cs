@@ -4661,7 +4661,6 @@ namespace Microsoft.Diagnostics.Tracing.Parsers.Clr
                     return (gc_heap_compact_reason)index;
                 }
 
-                Console.WriteLine("Never get here!");
                 Debug.Assert(false, index + " >= 0 && " + index + " < " + (int)gc_heap_compact_reason.max_compact_reasons_count);
                 return gc_heap_compact_reason.not_specified;
             }
@@ -5420,7 +5419,7 @@ namespace Microsoft.Diagnostics.Tracing.Parsers.Clr
             {
                 long ret = SizeAfter - Fragmentation;
 
-                //Debug.Assert(ret >= 0);
+                Debug.Assert(ret >= 0);
                 return ret;
             }
         }
