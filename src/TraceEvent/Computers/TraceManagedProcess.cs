@@ -406,7 +406,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                         var proc = pair.Key;
                         mang = pair.Value;
 
-                        TraceGC _gc = TraceGarbageCollector.GetCurrentGC(mang, data.TimeStampRelativeMSec, mustBeStarted: true);
+                        TraceGC _gc = TraceGarbageCollector.GetCurrentGC(mang, data.TimeStampRelativeMSec);
                         // If we are in the middle of a GC.
                         if (_gc != null)
                         {
@@ -431,7 +431,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                             var proc = pair.Key;
                             var tmpMang = pair.Value;
 
-                            TraceGC e = TraceGarbageCollector.GetCurrentGC(tmpMang, data.TimeStampRelativeMSec, mustBeStarted: true);
+                            TraceGC e = TraceGarbageCollector.GetCurrentGC(tmpMang, data.TimeStampRelativeMSec);
                             // If we are in the middle of a GC.
                             if (e != null)
                             {
@@ -573,6 +573,21 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                         TraceGC gc = new TraceGC(mang.GC.m_stats.HeapCount);
                         gc.Index = mang.GC.GCs.Count;
                         mang.GC.GCs.Add(gc);
+
+                        if (mang.GC.m_stats.IsServerGCUsed == 1)
+                        {
+                            mang.GC.m_stats.SetUpServerGcHistory(process.ProcessID, gc);
+                            bool isBGCThread(ThreadWorkSpan s) => mang.GC.m_stats.IsBGCThread(s.ThreadId);
+                            foreach (var s in RecentCpuSamples)
+                            {
+                                gc.AddServerGcSample(s, isBGCThread: isBGCThread(s));
+                            }
+
+                            foreach (var s in RecentThreadSwitches)
+                            {
+                                gc.AddServerGcThreadSwitch(s, isBGCThread: isBGCThread(s));
+                            }
+                        }
                     }
                 };
 
@@ -757,21 +772,6 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                             // add this suspension time to GC pause as that GC would be seen the ephemeral GC, not the BGC.
                             _gc.PauseDurationMSec = _gc.SuspendDurationMSec;
                             _gc.ProcessCpuAtLastGC = stats.GC.m_stats.ProcessCpuAtLastGC;
-                        }
-
-                        if ((_gc.Type != GCType.BackgroundGC) && stats.GC.m_stats.IsServerGCUsed == 1)
-                        {
-                            stats.GC.m_stats.SetUpServerGcHistory(process.ProcessID, _gc);
-                            bool isBGCThread(ThreadWorkSpan s) => stats.GC.m_stats.IsBGCThread(s.ThreadId);
-                            foreach (var s in RecentCpuSamples)
-                            {
-                                _gc.AddServerGcSample(s, isBGCThread: isBGCThread(s));
-                            }
-
-                            foreach (var s in RecentThreadSwitches)
-                            {
-                                _gc.AddServerGcThreadSwitch(s, isBGCThread: isBGCThread(s));
-                            }
                         }
 
                         // fire event
