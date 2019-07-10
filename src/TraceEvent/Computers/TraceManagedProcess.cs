@@ -406,7 +406,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                         var proc = pair.Key;
                         mang = pair.Value;
 
-                        TraceGC _gc = TraceGarbageCollector.GetCurrentGC(mang);
+                        TraceGC _gc = TraceGarbageCollector.GetCurrentGC(mang, data.TimeStampRelativeMSec);
                         // If we are in the middle of a GC.
                         if (_gc != null)
                         {
@@ -431,7 +431,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                             var proc = pair.Key;
                             var tmpMang = pair.Value;
 
-                            TraceGC e = TraceGarbageCollector.GetCurrentGC(tmpMang);
+                            TraceGC e = TraceGarbageCollector.GetCurrentGC(tmpMang, data.TimeStampRelativeMSec);
                             // If we are in the middle of a GC.
                             if (e != null)
                             {
@@ -447,7 +447,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                         if (loadedRuntime != null && gcProcess != null && gcProcess.MutableTraceEventStackSource() != null)
                         {
                             var stackSource = gcProcess.MutableTraceEventStackSource();
-                            TraceGC e = TraceGarbageCollector.GetCurrentGC(loadedRuntime);
+                            TraceGC e = TraceGarbageCollector.GetCurrentGC(loadedRuntime, data.TimeStampRelativeMSec);
                             StackSourceSample sample = new StackSourceSample(stackSource);
                             sample.Metric = 1;
                             sample.TimeRelativeMSec = data.TimeStampRelativeMSec;
@@ -471,7 +471,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
 
                         var cpuIncrement = tmpProc.SampleIntervalMSec();
 
-                        TraceGC _gc = TraceGarbageCollector.GetCurrentGC(mang);
+                        TraceGC _gc = TraceGarbageCollector.GetCurrentGC(mang, data.TimeStampRelativeMSec);
                         // If we are in the middle of a GC.
                         if (_gc != null)
                         {
@@ -629,7 +629,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                         return;
                     }
 
-                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats);
+                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
                     if (_gc != null)
                     {
                         if (_gc.Type == GCType.BackgroundGC)
@@ -671,7 +671,6 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                         }
 
                         _gc.PauseEndRelativeMSec = data.TimeStampRelativeMSec;
-                        _gc.IsComplete = true;
                     }
 
                     // We don't change between a GC end and the pause resume.   
@@ -715,7 +714,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                             !((stats.GC.GCs.Count > 0) && stats.GC.GCs[stats.GC.GCs.Count - 1].Number == data.Count))
                     {
                         Debug.Assert(0 <= data.Depth && data.Depth <= 2);
-                        TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats);
+                        TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
                         Debug.Assert(!_gc.SeenStartEvent);
                         _gc.Generation = data.Depth;
                         _gc.Reason = data.Reason;
@@ -742,7 +741,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
 
                             if (_gc.Reason == GCReason.PMFullGC)
                             {
-                                TraceGC lastGC = TraceGarbageCollector.GetCurrentGC(stats);
+                                TraceGC lastGC = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
                                 if (lastGC != null)
                                 {
                                     lastGC.OnEnd(stats.GC);
@@ -797,7 +796,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 {
                     var stats = currentManagedProcess(data);
 
-                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats);
+                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
                     if (_gc != null)
                     {
                         if (_gc.PinnedObjects == null)
@@ -822,7 +821,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 {
                     var stats = currentManagedProcess(data);
 
-                    TraceGC _event = TraceGarbageCollector.GetCurrentGC(stats);
+                    TraceGC _event = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
                     if (_event != null)
                     {
                         // ObjectID is supposed to be an IntPtr. But "Address" is defined as UInt64 in 
@@ -842,7 +841,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
 
                     stats.GC.m_stats.AddServerGCThreadFromMark(data.ThreadID, data.HeapNum);
 
-                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats);
+                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
                     if (_gc != null)
                     {
                         if (_gc.PerHeapMarkTimes == null)
@@ -875,7 +874,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 source.Clr.GCJoin += delegate (GCJoinTraceData data)
                 {
                     var stats = currentManagedProcess(data);
-                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats);
+                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
                     if (_gc != null)
                     {
                         _gc.AddGcJoin(data, isBackground: stats.GC.m_stats.IsBGCThread(data.ThreadID));
@@ -890,7 +889,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 clrPrivate.GCPinPlugAtGCTime += delegate (PinPlugAtGCTimeTraceData data)
                 {
                     var stats = currentManagedProcess(data);
-                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats);
+                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
                     if (_gc != null)
                     {
                         // ObjectID is supposed to be an IntPtr. But "Address" is defined as UInt64 in 
@@ -911,7 +910,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     var stats = currentManagedProcess(data);
                     stats.GC.m_stats.AddServerGCThreadFromMark(data.ThreadID, data.HeapNum);
 
-                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats);
+                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
                     if (_gc != null)
                     {
                         if (_gc.PerHeapMarkTimes == null)
@@ -931,7 +930,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 clrPrivate.GCMarkFinalizeQueueRoots += delegate (GCMarkTraceData data)
                 {
                     var stats = currentManagedProcess(data);
-                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats);
+                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
                     if (_gc != null)
                     {
                         if ((_gc.PerHeapMarkTimes != null) && _gc.PerHeapMarkTimes.ContainsKey(data.HeapNum))
@@ -945,7 +944,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 clrPrivate.GCMarkHandles += delegate (GCMarkTraceData data)
                 {
                     var stats = currentManagedProcess(data);
-                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats);
+                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
                     if (_gc != null)
                     {
                         if ((_gc.PerHeapMarkTimes != null) && _gc.PerHeapMarkTimes.ContainsKey(data.HeapNum))
@@ -959,7 +958,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 clrPrivate.GCMarkCards += delegate (GCMarkTraceData data)
                 {
                     var stats = currentManagedProcess(data);
-                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats);
+                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
                     if (_gc != null)
                     {
                         if ((_gc.PerHeapMarkTimes != null) && _gc.PerHeapMarkTimes.ContainsKey(data.HeapNum))
@@ -1030,7 +1029,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 clrPrivate.GCBGCRevisit += delegate (BGCRevisitTraceData data)
                 {
                     var stats = currentManagedProcess(data);
-                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats);
+                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec, foo: true);
                     if (_gc != null)
                     {
                         Debug.Assert(_gc.Type == GCType.BackgroundGC);
@@ -1047,7 +1046,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 source.Clr.GCStop += delegate (GCEndTraceData data)
                 {
                     var stats = currentManagedProcess(data);
-                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats);
+                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
                     if (_gc != null)
                     {
                         _gc.DurationMSec = data.TimeStampRelativeMSec - _gc.StartRelativeMSec;
@@ -1059,7 +1058,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 {
                     var process = data.Process();
                     var stats = currentManagedProcess(data);
-                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats);
+                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
 
                     var sizeAfterMB = (data.GenerationSize1 + data.GenerationSize2 + data.GenerationSize3) / 1000000.0;
                     if (_gc != null)
@@ -1186,7 +1185,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 clrPrivate.GCJoin += delegate (GCJoinTraceData data)
                 {
                     var stats = currentManagedProcess(data);
-                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats);
+                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
                     if (_gc != null)
                     {
                         _gc.AddGcJoin(data, isBackground: stats.GC.m_stats.IsBGCThread(data.ThreadID));
@@ -1492,16 +1491,16 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
         public List<TraceGC> GCs { get { return m_gcs; } }
 
         #region private
-        internal static TraceGC GetCurrentGC(TraceLoadedDotNetRuntime proc)
+        internal static TraceGC GetCurrentGC(TraceLoadedDotNetRuntime proc, double timeStampRelativeMSec, bool foo = false)
         {
             IReadOnlyList<TraceGC> gcs = proc.GC.GCs;
             if (gcs.Count > 0)
             {
                 TraceGC last = gcs.Last();
                 // Give a 1ms buffer, occasionally a join end event will come out a fraction of a millisecond after the GC is over
-                // double lastPauseEndRelativeMSecSafe = last.PauseEndRelativeMSec + 1;
+                double lastPauseEndRelativeMSecSafe = last.PauseEndRelativeMSec + 1;
 
-                if (!last.IsComplete)
+                if (!last.IsComplete || (!foo && timeStampRelativeMSec < lastPauseEndRelativeMSecSafe))
                 {
                     return last;
                 }
@@ -2449,6 +2448,8 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         #region private
         internal void OnEnd(TraceGarbageCollector details)
         {
+            IsComplete = true;
+
             // calculate core gc values
             pinnedObjectSizes = -1;
             TotalPinnedPlugSize = -1;
@@ -4264,9 +4265,9 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
 
         // This is the last GC in progress. We need this for server Background GC.
         // See comments for lastCompletedGC.
-        private static TraceGC GetLastGC(TraceLoadedDotNetRuntime proc)
+        private static TraceGC GetLastGC(TraceLoadedDotNetRuntime proc, double timeStampRelativeMSec)
         {
-            TraceGC _event = TraceGarbageCollector.GetCurrentGC(proc);
+            TraceGC _event = TraceGarbageCollector.GetCurrentGC(proc, timeStampRelativeMSec: timeStampRelativeMSec);
             if ((proc.GC.m_stats.IsServerGCUsed == 1) &&
                 (_event == null))
             {
@@ -4372,7 +4373,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
                 }
             }
 
-            TraceGC _event = GetLastGC(proc);
+            TraceGC _event = GetLastGC(proc, data.TimeStampRelativeMSec);
             if (_event != null)
             {
                 _event.GlobalHeapHistory = new GCGlobalHeapHistory()
@@ -4398,7 +4399,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
                 return;
             }
 
-            TraceGC _event = GetLastGC(proc);
+            TraceGC _event = GetLastGC(proc, data.TimeStampRelativeMSec);
             if (_event != null)
             {
                 var hist = new GCPerHeapHistory()
