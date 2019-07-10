@@ -2211,7 +2211,7 @@ namespace Microsoft.Diagnostics.Tracing.Etlx
                     cpuFromThreads += curThread.CPUMSec;
                 }
 
-                //Debug.Assert(Math.Abs(cpuFromThreads - process.CPUMSec) < .01);     // We add up 
+                Debug.Assert(Math.Abs(cpuFromThreads - process.CPUMSec) < .01);     // We add up 
             }
 
             // The eventsToStacks array is sorted.  

@@ -7206,11 +7206,7 @@ namespace Microsoft.Diagnostics.Tracing.Parsers.Kernel
         {
             Debug.Assert(!(Version == 0 && EventDataLength != 20));
             Debug.Assert(!(Version == 1 && EventDataLength < HostOffset(28, 1)));   // TODO fixed by hand
-            if (Version > 1 && EventDataLength < HostOffset(28, 1))
-            //{
-            //    Console.Error.WriteLine($"EventDataLength is only {EventDataLength}, expected at least {HostOffset(28, 1)}");
-            //}
-            //Debug.Assert(!(Version > 1 && EventDataLength < HostOffset(28, 1)));
+            Debug.Assert(!(Version > 1 && EventDataLength < HostOffset(28, 1)));
             Action(this);
         }
         public override StringBuilder ToXml(StringBuilder sb)
@@ -7379,8 +7375,8 @@ namespace Microsoft.Diagnostics.Tracing.Parsers.Kernel
         }
         protected internal override void Dispatch()
         {
-            //Debug.Assert(!(Version == 2 && EventDataLength != HostOffset(36, 1)));
-            //Debug.Assert(!(Version > 2 && EventDataLength < HostOffset(36, 1)));
+            Debug.Assert(!(Version == 2 && EventDataLength != HostOffset(36, 1)));
+            Debug.Assert(!(Version > 2 && EventDataLength < HostOffset(36, 1)));
             Action(this);
         }
 
@@ -7487,8 +7483,8 @@ namespace Microsoft.Diagnostics.Tracing.Parsers.Kernel
         }
         protected internal override void Dispatch()
         {
-            //Debug.Assert(!(Version == 2 && EventDataLength != HostOffset(44, 1)));
-            //Debug.Assert(!(Version > 2 && EventDataLength < HostOffset(44, 1)));
+            Debug.Assert(!(Version == 2 && EventDataLength != HostOffset(44, 1)));
+            Debug.Assert(!(Version > 2 && EventDataLength < HostOffset(44, 1)));
             Action(this);
         }
         public override StringBuilder ToXml(StringBuilder sb)
@@ -8070,8 +8066,8 @@ namespace Microsoft.Diagnostics.Tracing.Parsers.Kernel
         }
         protected internal override void Dispatch()
         {
-            //Debug.Assert(!(Version == 2 && EventDataLength != HostOffset(52, 1)));
-            //Debug.Assert(!(Version > 2 && EventDataLength < HostOffset(52, 1)));
+            Debug.Assert(!(Version == 2 && EventDataLength != HostOffset(52, 1)));
+            Debug.Assert(!(Version > 2 && EventDataLength < HostOffset(52, 1)));
             Action(this);
         }
         public override StringBuilder ToXml(StringBuilder sb)
