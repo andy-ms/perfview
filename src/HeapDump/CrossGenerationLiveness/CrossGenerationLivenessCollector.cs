@@ -1,4 +1,4 @@
-﻿#if CROSS_GENERATION_LIVENESS
+﻿//#if CROSS_GENERATION_LIVENESS
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -217,7 +217,7 @@ namespace Microsoft.Diagnostics.CrossGenerationLiveness
             var ret = LoadLibrary(fullPath);
             if (ret == IntPtr.Zero)
             {
-                throw new ApplicationException("Unable to load " + relativePath + ".");
+                throw new ApplicationException($"Unable to load {relativePath}.\nLooked in {fullPath}");
             }
         }
 
@@ -277,4 +277,4 @@ namespace Microsoft.Diagnostics.CrossGenerationLiveness
         private static extern IntPtr LoadLibrary(string lpFileName);
     }
 }
-#endif
+//#endif

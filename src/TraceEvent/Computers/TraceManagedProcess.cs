@@ -732,7 +732,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     if ((stats.GC.m_stats.suspendThreadIDGC > 0 || stats.GC.m_stats.suspendThreadIDOther > 0) &&
                             !((stats.GC.GCs.Count > 0) && stats.GC.GCs[stats.GC.GCs.Count - 1].Number == data.Count))
                     {
-                        Debug.Assert(0 <= data.Depth && data.Depth <= 2);
+                        Debug.Assert(0 <= data.Depth && data.Depth <= 2, "GC generation should be 0-2");
                         TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
                         if (_gc.SeenStartEvent)
                         {
@@ -746,7 +746,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                         _gc.Number = data.Count;
                         _gc.Type = data.Type;
                         _gc.is20Event = data.IsClassicProvider;
-                        Debug.Assert(_gc.SeenStartEvent);
+                        Debug.Assert(_gc.SeenStartEvent, "We should wrote GC number so SeenStartEvent should be true");
                         bool isEphemeralGCAtBGCStart = false;
                         // Detecting the ephemeral GC that happens at the beginning of a BGC.
                         if (stats.GC.GCs.Count > 0)
@@ -760,7 +760,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                             }
                         }
 
-                        Debug.Assert(stats.GC.m_stats.suspendTimeRelativeMSec != -1);
+                        Debug.Assert(stats.GC.m_stats.suspendTimeRelativeMSec != -1, "suspendTimeRelativeMSec should be set");
                         if (isEphemeralGCAtBGCStart || _gc.Reason == GCReason.PMFullGC)
                         {
                             _gc.PauseStartRelativeMSec = data.TimeStampRelativeMSec;
@@ -1077,12 +1077,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     {
                         _gc.DurationMSec = data.TimeStampRelativeMSec - _gc.StartRelativeMSec;
                         _gc.PauseEndRelativeMSec = data.TimeStampRelativeMSec; // Will likely be overwritten by a RestartEEStop
-                        Console.WriteLine($"GCStop: setting gc {_gc.Number} stop to {data.TimeStampRelativeMSec}");
                         Debug.Assert(_gc.Number == data.Count);
-                    }
-                    else
-                    {
-                        Debug.Fail("GCStop: no gc to stop");
                     }
                 };
 
@@ -2572,7 +2567,15 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
                 }
 
                 // Get the elapsed time since the previous GC finished.
-                Debug.Assert(GCs[gc.Index] == gc);
+                if (GCs[gc.Index] != gc)
+                {
+                    int actualIndex = GCs.IndexOf(gc);
+                    Console.WriteLine($"gc.Index is {gc.Index}, but actual index is {actualIndex}");
+                    string actualNumbers = string.Join(", ", GCs.Select(g => g.Number.ToString()));
+                    Console.WriteLine($"gc number is {gc.Number}, gc numbers are {actualNumbers}");
+                }
+                Debug.Assert(GCs[gc.Index] == gc, "GC INDEX IS WRONG!");
+
                 int previousGCIndex = gc.Index - 1;
                 if (previousGCIndex >= 0 && !GCs[previousGCIndex].SeenStartEvent)
                 {
@@ -2590,7 +2593,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
                     previousGCStopTimeRelativeMSec = GCs[0].StartRelativeMSec;
                 }
 
-                Debug.Assert(previousGCStopTimeRelativeMSec <= gc.StartRelativeMSec);
+                // Debug.Assert(previousGCStopTimeRelativeMSec <= gc.StartRelativeMSec);
 
                 double totalTime = (gc.StartRelativeMSec + gc.DurationMSec) - previousGCStopTimeRelativeMSec;
                 pauseTimePercentage = (totalPauseTime * 100) / (totalTime);
@@ -2601,7 +2604,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
                 pauseTimePercentage = (gc.PauseDurationMSec * 100) / (totalTime);
             }
 
-            Debug.Assert(pauseTimePercentage <= 100);
+            // Debug.Assert(pauseTimePercentage <= 100);
             return pauseTimePercentage;
         }
 

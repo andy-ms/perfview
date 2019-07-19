@@ -78,7 +78,7 @@ namespace FastSerialization
     /// consumed by the IStreamWriter.WriteLabel method. On reading you can use
     /// IStreamReader.Current and and IStreamReader. 
     /// </summary>
-#if FASTSERIALIZATION_PUBLIC
+#if FASTSERIALIZATION_PUBLIC 
     public
 #endif
     enum StreamLabel : long

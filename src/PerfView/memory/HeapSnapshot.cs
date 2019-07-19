@@ -30,7 +30,7 @@ namespace PerfView
             log.WriteLine("Finished Heap Dump.");
         }
 
-#if CROSS_GENERATION_LIVENESS
+//#if CROSS_GENERATION_LIVENESS
         /// <summary>
         /// Take a heap dump from a live process. 
         /// </summary>
@@ -48,7 +48,7 @@ namespace PerfView
             DumpGCHeap(qualifiers, processID.ToString(), outputFile, log, arch);
             log.WriteLine("Finished Heap Dump.");
         }
-#endif
+//#endif
 
         /// <summary>
         /// Force a GC on process processID
