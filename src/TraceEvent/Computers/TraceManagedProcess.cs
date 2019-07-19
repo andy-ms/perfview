@@ -1072,12 +1072,11 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 source.Clr.GCStop += delegate (GCEndTraceData data)
                 {
                     var stats = currentManagedProcess(data);
-                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec, mustBeStarted: true);
+                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec, mustBeStarted: true, expectedGCNumber: data.Count);
                     if (_gc != null)
                     {
                         _gc.DurationMSec = data.TimeStampRelativeMSec - _gc.StartRelativeMSec;
                         _gc.PauseEndRelativeMSec = data.TimeStampRelativeMSec; // Will likely be overwritten by a RestartEEStop
-                        Debug.Assert(_gc.Number == data.Count);
                     }
                 };
 
@@ -1494,9 +1493,8 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
         }
 
         private Version runtimeVersion;
-
-        #endregion
-    }
+    #endregion
+}
 
     /// <summary>
     /// Garbage Collector (GC) specific details about this process
@@ -1518,7 +1516,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
         public List<TraceGC> GCs { get { return m_gcs; } }
 
         #region private
-        internal static TraceGC GetCurrentGC(TraceLoadedDotNetRuntime proc, double timeStampRelativeMSec, bool mustBeStarted = false)
+        internal static TraceGC GetCurrentGC(TraceLoadedDotNetRuntime proc, double timeStampRelativeMSec, bool mustBeStarted = false, int? expectedGCNumber = null)
         {
             IReadOnlyList<TraceGC> gcs = proc.GC.GCs;
             if (gcs.Count > 0)
@@ -1527,18 +1525,33 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 // Give a 1ms buffer, occasionally a join end event will come out a fraction of a millisecond after the GC is over
                 double lastPauseEndRelativeMSecSafe = last.PauseEndRelativeMSec + 1;
 
-                if ((!last.IsComplete || timeStampRelativeMSec < lastPauseEndRelativeMSecSafe) && (!mustBeStarted || last.SeenStartEvent))
-                {
-                    return last;
-                }
-
                 bool bgsIsFinished = proc.GC.m_stats.currentBGC == null;
                 TraceGC bgc = proc.GC.m_stats.currentBGC ?? proc.GC.m_stats.currentOrFinishedBGC;
-                if (bgc != null && (!bgsIsFinished || timeStampRelativeMSec < bgc.PauseEndRelativeMSec + 1))
+
+                if (expectedGCNumber != null)
                 {
-                    Debug.Assert(bgc.SeenStartEvent);
-                    Debug.Assert(bgc.Type == GCType.BackgroundGC);
-                    return bgc;
+                    if (bgc != null && expectedGCNumber == bgc.Number)
+                    {
+                        return bgc;
+                    }
+                    else if (last != null && expectedGCNumber == last.Number)
+                    {
+                        return last;
+                    }
+                }
+                else
+                {
+                    if ((!last.IsComplete || timeStampRelativeMSec < lastPauseEndRelativeMSecSafe) && (!mustBeStarted || last.SeenStartEvent))
+                    {
+                        return last;
+                    }
+
+                    if (bgc != null && (!bgsIsFinished || timeStampRelativeMSec < bgc.PauseEndRelativeMSec + 1))
+                    {
+                        Debug.Assert(bgc.SeenStartEvent);
+                        Debug.Assert(bgc.Type == GCType.BackgroundGC);
+                        return bgc;
+                    }
                 }
             }
             return null;
