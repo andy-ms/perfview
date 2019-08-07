@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using Microsoft.Diagnostics.HeapDump;
 using Microsoft.Diagnostics.Runtime;
 using Microsoft.Diagnostics.Runtime.Interop;
+using Microsoft.Samples.Debugging.CorDebug;
 
 namespace Microsoft.Diagnostics.CrossGenerationLiveness
 {
@@ -18,7 +19,7 @@ namespace Microsoft.Diagnostics.CrossGenerationLiveness
     internal sealed class CrossGenerationLivenessCollector
     {
         private const int AttachTimeoutInMsec = 60000;
-        private const int WaitForEventTimeoutInMsec = 5000;
+        private const int WaitForEventTimeoutInMsec = 500_000;
 
         private static string s_ProcessArchDirectory;
 
@@ -68,6 +69,8 @@ namespace Microsoft.Diagnostics.CrossGenerationLiveness
             get { return _CollectionMetadata; }
         }
 
+        const string CLR_NAME = "coreclr";
+
         public void AttachAndExecute()
         {
             // Explicitly load app-local dependencies.
@@ -88,18 +91,21 @@ namespace Microsoft.Diagnostics.CrossGenerationLiveness
                 debugger.Execute(".sympath");
                 debugger.Execute("!sym noisy");
 
-                // Force load the PDB for clr.dll
-                debugger.Execute(".reload /f clr.dll");
 
-                // Ensure that the PDB for clr.dll was successfully loaded.  We do this by attempting to load one of the required symbols.
+                // Force load the PDB for {CLR_NAME}.dll
+                debugger.Execute($".reload /f {CLR_NAME}.dll");
+
+                // Ensure that the PDB for {CLR_NAME}.dll was successfully loaded.  We do this by attempting to load one of the required symbols.
                 ulong baseAddress;
-                if (debugger.DebugSymbols.GetSymbolModule("clr!SVR::gc_heap::n_heaps", out baseAddress) != 0)
+                if (debugger.DebugSymbols.GetSymbolModule($"{CLR_NAME}!SVR::gc_heap::n_heaps", out baseAddress) != 0)
                 {
-                    throw new Exception("CLR symbols are not properly loaded.  Please set the symbol path and try again.");
+                    throw new Exception($"{CLR_NAME} symbols are not properly loaded.  Please set the symbol path and try again.");
                 }
 
                 // Load SOS.
-                debugger.Execute(".loadby sos clr");
+                // Does not work as of https://github.com/dotnet/coreclr/pull/25220
+                // debugger.Execute($".loadby sos {CLR_NAME}");
+                debugger.Execute(".load C:\\Users\\anhans\\.dotnet\\sos\\sos.dll");
 
                 // Execute find roots, which will throw an exception when we complete the mark phase.
                 debugger.Execute("!FindRoots -gen " + _GenerationToTrigger);
@@ -116,6 +122,17 @@ namespace Microsoft.Diagnostics.CrossGenerationLiveness
                     hr = debugger.DebugControl.WaitForEvent(0, WaitForEventTimeoutInMsec);
                     if (hr < 0)
                     {
+                        HResult hres = (HResult)hr;
+                        if (hres == HResult.E_UNEXPECTED)
+                        {
+                            // https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/dbgeng/nf-dbgeng-idebugcontrol-waitforevent
+                            // Either there is an outstanding request for input, or none of the targets could generate events. 
+
+                            // https://docs.microsoft.com/en-us/windows-hardware/drivers/debugger/hresult-values
+                            // "The target was not accessible, or the engine was not in a state where the function or method could be processed."
+                            _Log.WriteLine("E_UNEXPECTED!");
+                        }
+
                         _Log.WriteLine("Failure encountered in WaitForEvent.  HR: {0:x}", hr);
                         _EncounteredException = new Exception("Failure encountered in WaitForEvent.");
                         break;
@@ -154,7 +171,7 @@ namespace Microsoft.Diagnostics.CrossGenerationLiveness
 
                 // Get the number of server GC heaps.
                 int nHeaps;
-                if (!eventArgs.Debugger.Evaluate("clr!SVR::gc_heap::n_heaps", out nHeaps))
+                if (!eventArgs.Debugger.Evaluate($"{CLR_NAME}!SVR::gc_heap::n_heaps", out nHeaps))
                 {
                     _EncounteredException = new Exception("Unable to get the number of heaps.");
                     return;
@@ -169,7 +186,7 @@ namespace Microsoft.Diagnostics.CrossGenerationLiveness
                         // Calculate the array offset.
                         uint offset = i * 16; // hardcoded in gc as well.
                         uint result;
-                        if (!eventArgs.Debugger.Evaluate("clr!SVR::gc_heap::g_promoted", true, offset, out result))
+                        if (!eventArgs.Debugger.Evaluate($"{CLR_NAME}!SVR::gc_heap::g_promoted", true, offset, out result))
                         {
                             _EncounteredException = new Exception("Unable to calculate promoted bytes for server GC.");
                             return;
@@ -181,7 +198,7 @@ namespace Microsoft.Diagnostics.CrossGenerationLiveness
                 else
                 {
                     // Workstation GC
-                    if (!eventArgs.Debugger.Evaluate("clr!WKS::gc_heap::g_promoted", false, out promotedBytes))
+                    if (!eventArgs.Debugger.Evaluate($"{CLR_NAME}!WKS::gc_heap::g_promoted", false, out promotedBytes))
                     {
                         _EncounteredException = new Exception("Unable to get promoted bytes for workstation GC.");
                         return;
@@ -214,10 +231,12 @@ namespace Microsoft.Diagnostics.CrossGenerationLiveness
         public static void LoadNative(string relativePath)
         {
             var fullPath = Path.Combine(RootDir, ProcessArchitectureDirectory, relativePath);
+            int errBefore = Marshal.GetLastWin32Error();
             var ret = LoadLibrary(fullPath);
             if (ret == IntPtr.Zero)
             {
-                throw new ApplicationException($"Unable to load {relativePath}.\nLooked in {fullPath}");
+                int err = Marshal.GetLastWin32Error();
+                throw new ApplicationException($"Unable to load {relativePath}.\nLooked in {fullPath}. Exists? {File.Exists(fullPath)}; errBefore: {err}, Error Code: {err}");
             }
         }
 
@@ -245,6 +264,8 @@ namespace Microsoft.Diagnostics.CrossGenerationLiveness
                     s_ProcessArchDirectory = ProcessArch.ToString().ToLowerInvariant();
                 }
 
+                Console.WriteLine($"RETURNING PROCESSARCHITECTUREDIRECTORY={s_ProcessArchDirectory}");
+
                 return s_ProcessArchDirectory;
             }
         }
@@ -267,6 +288,8 @@ namespace Microsoft.Diagnostics.CrossGenerationLiveness
                 path = path.Substring(
                     0,
                     path.LastIndexOf(Path.DirectorySeparatorChar));
+
+                Console.WriteLine($"RETURNING ROOTDIR={path}");
 
                 return path;
             }

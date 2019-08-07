@@ -15,14 +15,21 @@ using Microsoft.Diagnostics.Tracing.Parsers.Symbol;
 using Microsoft.Diagnostics.Tracing.Stacks;
 using Microsoft.Diagnostics.Utilities;
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Diagnostics;
+using System.Diagnostics.Tracing;
 using System.Linq;
+using System.Reflection.Metadata;
 using System.Text;
+using System.Threading;
 using Address = System.UInt64;
 
 namespace Microsoft.Diagnostics.Tracing.Analysis
 {
+    using ThreadID = Int32;
+
     /// <summary>
     /// Extension methods to enable TraceManagedProcess
     /// </summary>
@@ -412,7 +419,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                         {
                             if ((_gc.Type != GCType.BackgroundGC) && (mang.GC.m_stats.IsServerGCUsed == 1))
                             {
-                                _gc.AddServerGcThreadSwitch(new ThreadWorkSpan(data), isBGCThread: mang.GC.m_stats.IsBGCThread(data.OldThreadID));
+                                _gc.AddServerGcThreadSwitch(new ThreadWorkSpan(data), threadKind: mang.GC.m_stats.GetThreadKind(data.OldThreadID));
                             }
                         }
                     }
@@ -437,7 +444,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                             {
                                 if ((e.Type != GCType.BackgroundGC) && (tmpMang.GC.m_stats.IsServerGCUsed == 1))
                                 {
-                                    e.AddServerGcSample(new ThreadWorkSpan(data), isBGCThread: tmpMang.GC.m_stats.IsBGCThread(data.ThreadID));
+                                    e.AddServerGcSample(new ThreadWorkSpan(data), threadKind: tmpMang.GC.m_stats.GetThreadKind(data.ThreadID));
                                     loadedRuntime = tmpMang;
                                     gcProcess = proc;
                                 }
@@ -512,6 +519,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
 
                 source.Clr.GCSuspendEEStart += delegate (GCSuspendEETraceData data)
                 {
+                    MaybePrintEvent(data);
                     isEESuspended = true;
 
                     var process = data.Process();
@@ -574,30 +582,35 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
 
                     if (data.Reason == GCSuspendEEReason.SuspendForGC)
                     {
-                        AddNewGC(process, mang, isKnownToBeBackground: false);
+                        AddNewGC(process, mang, isKnownToBeBackground: false, number: null);
                     }
                 };
 
-                TraceGC AddNewGC(TraceProcess process, TraceLoadedDotNetRuntime mang, bool isKnownToBeBackground)
+                TraceGC AddNewGC(TraceProcess process, TraceLoadedDotNetRuntime mang, bool isKnownToBeBackground, int? number)
                 {
                     TraceGC gc = new TraceGC(mang.GC.m_stats.HeapCount) { Index = mang.GC.GCs.Count };
                     mang.GC.GCs.Add(gc);
 
                     // Ideally we would do this only for non-background GCs, but we might not have that information at this point
                     // and we want SetUpServerGcHistory called immediately
-                    if (!isKnownToBeBackground && mang.GC.m_stats.IsServerGCUsed == 1)
+                    if (!isKnownToBeBackground && mang.GC.m_stats.IsServerGCUsed != 0) //== 1)
                     {
                         mang.GC.m_stats.SetUpServerGcHistory(process.ProcessID, gc);
-                        bool isBGCThread(ThreadWorkSpan s) => mang.GC.m_stats.IsBGCThread(s.ThreadId);
+                        GCThreadKind? threadKind(ThreadWorkSpan s) => mang.GC.m_stats.GetThreadKind(s.ThreadId);
                         foreach (var s in RecentCpuSamples)
                         {
-                            gc.AddServerGcSample(s, isBGCThread: isBGCThread(s));
+                            gc.AddServerGcSample(s, threadKind: threadKind(s));
                         }
 
                         foreach (var s in RecentThreadSwitches)
                         {
-                            gc.AddServerGcThreadSwitch(s, isBGCThread: isBGCThread(s));
+                            gc.AddServerGcThreadSwitch(s, threadKind: threadKind(s));
                         }
+                    }
+                    else
+                    {
+                        // TODO:KILL
+                        Console.WriteLine($"Not adding ServerGcHistory for gc {number}. process: {process.Name}, isKnownToBeBackground: {isKnownToBeBackground} ; IsServerGCUsed: {mang.GC.m_stats.IsServerGCUsed}");
                     }
 
                     return gc;
@@ -606,6 +619,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 // In 2.0 we didn't have this event.
                 source.Clr.GCSuspendEEStop += delegate (GCNoUserDataTraceData data)
                 {
+                    MaybePrintEvent(data);
                     var mang = currentManagedProcess(data);
 
                     if(!(data.ThreadID == mang.GC.m_stats.suspendThreadIDBGC || data.ThreadID == mang.GC.m_stats.suspendThreadIDGC))
@@ -725,6 +739,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
 
                 source.Clr.GCStart += delegate (GCStartTraceData data)
                 {
+                    MaybePrintEvent(data);
                     var process = data.Process();
                     var stats = currentManagedProcess(data);
 
@@ -739,7 +754,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                             // After starting a BGC, we may proceed with an ephemeral GC.
                             // This ephemeral GC won't have an associated SuspendEEStart, so we have to create it here instead
                             Debug.Assert(stats.GC.m_stats.currentBGC == _gc);
-                            _gc = AddNewGC(process, stats, isKnownToBeBackground: _gc.Type == GCType.BackgroundGC);
+                            _gc = AddNewGC(process, stats, isKnownToBeBackground: data.Type == GCType.BackgroundGC, number: data.Count);
                         }
                         _gc.Generation = data.Depth;
                         _gc.Reason = data.Reason;
@@ -898,19 +913,43 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     GCStats.ProcessPerHeapHistory(stats, data);
                 };
 
-                source.Clr.GCJoin += delegate (GCJoinTraceData data)
+                Dictionary<TraceGC, TraceGarbageCollector.GCJoinState> gcJoinStates = new Dictionary<TraceGC, TraceGarbageCollector.GCJoinState>();
+
+                Action<GCJoinTraceData> handleJoin = delegate (GCJoinTraceData data)
                 {
+                    MaybePrintEvent(data);
                     var stats = currentManagedProcess(data);
-                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
+                    GCAndThreadKind? _gc = TraceGarbageCollector.GetCurrentGCForJoin(
+                        proc: stats,
+                        timeStampRelativeMSec: data.TimeStampRelativeMSec,
+                        heapCount: stats.GC.m_stats.HeapCount == -1 ? (uint?)null : (uint)stats.GC.m_stats.HeapCount,
+                        joinStates: gcJoinStates,
+                        joinStage: (GCJoinStage) data.GCID,
+                        time: data.JoinTime,
+                        type: data.JoinType,
+                        threadId: data.ThreadID);
                     if (_gc != null)
                     {
-                        _gc.AddGcJoin(data, isEESuspended: isEESuspended, isBGCThread: stats.GC.m_stats.IsBGCThread(data.ThreadID));
+                        //TODO:KILL
+                        if (_gc.Value.GC.IsComplete && data.GCID == 2)
+                        {
+                            throw new Exception("???");
+                        }
+
+                        //var threadKind = _gc.Value.ThreadKind == null ? stats.GC.m_stats.GetThreadKind(data.ThreadID) : _gc.Value.ThreadKind;
+                        _gc.Value.GC.AddGcJoin(data, isEESuspended: isEESuspended, threadKind: _gc.Value.ThreadKind);
                     }
                     else
                     {
-                        Debug.Fail("Every join should be associated with some GC");
+                        // It's possible that we have a time slice that includes join events but not the GCStart. Just ignore them in that case.
+                        if (stats.GC.GCs.Any())
+                        {
+                            Debug.Fail("Every join should be associated with some GC");
+                        }
                     }
                 };
+
+                source.Clr.GCJoin += handleJoin;
 
                 clrPrivate.GCPinPlugAtGCTime += delegate (PinPlugAtGCTimeTraceData data)
                 {
@@ -1071,6 +1110,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
 
                 source.Clr.GCStop += delegate (GCEndTraceData data)
                 {
+                    MaybePrintEvent(data);
                     var stats = currentManagedProcess(data);
                     TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec, mustBeStarted: true, expectedGCNumber: data.Count);
                     if (_gc != null)
@@ -1208,15 +1248,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     }
                 };
 
-                clrPrivate.GCJoin += delegate (GCJoinTraceData data)
-                {
-                    var stats = currentManagedProcess(data);
-                    TraceGC _gc = TraceGarbageCollector.GetCurrentGC(stats, data.TimeStampRelativeMSec);
-                    if (_gc != null)
-                    {
-                        _gc.AddGcJoin(data, isEESuspended: isEESuspended, isBGCThread: stats.GC.m_stats.IsBGCThread(data.ThreadID));
-                    }
-                };
+                clrPrivate.GCJoin += handleJoin;
 
                 source.Clr.GCFinalizeObject += data =>
                 {
@@ -1492,9 +1524,185 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
             }
         }
 
+        internal const bool PRINT = false;
+
+        private static void MaybePrintEvent(TraceEvent te)
+        {
+            if (PRINT)
+            {
+                PrintEvent(te);
+            }
+        }
+
+        private static void PrintEvent(TraceEvent te)
+        {
+            StringBuilder sb = new StringBuilder();
+            te.ToXml(sb);
+            Console.WriteLine(sb.ToString());
+        }
+
         private Version runtimeVersion;
     #endregion
-}
+    }
+
+    // This could be merged into GcJoinID, but this is experimental and that isn't.
+    [Obsolete] // Experimental
+    public enum GCJoinStage
+    {
+        restart = -1,
+        init_cpu_mapping = 0,
+        done = 1,
+        generation_determined = 2,
+        begin_mark_phase = 3,
+        scan_dependent_handles = 4,
+        rescan_dependent_handles = 5,
+        scan_sizedref_done = 6,
+        null_dead_short_weak = 7,
+        scan_finalization = 8,
+        null_dead_long_weak = 9,
+        null_dead_syncblk = 10,
+        decide_on_compaction = 11,
+        rearrange_segs_compaction = 12,
+        adjust_handle_age_compact = 13,
+        adjust_handle_age_sweep = 14,
+        begin_relocate_phase = 15,
+        relocate_phase_done = 16,
+        verify_objects_done = 17,
+        start_bgc = 18,
+        restart_ee = 19,
+        concurrent_overflow = 20,
+        suspend_ee = 21,
+        bgc_after_ephemeral = 22,
+        allow_fgc = 23,
+        bgc_sweep = 24,
+        suspend_ee_verify = 25,
+        restart_ee_verify = 26,
+        set_state_free = 27,
+        r_join_update_card_bundle = 28,
+        after_absorb = 29,
+        verify_copy_table = 30,
+        after_reset = 31,
+        after_ephemeral_sweep = 32,
+        after_profiler_heap_walk = 33,
+        minimal_gc = 34,
+        after_commit_soh_no_gc = 35,
+        expand_loh_no_gc = 36,
+        final_no_gc = 37,
+        disable_software_write_watch = 38,
+        count = 39,
+    }
+
+    [Obsolete] // Experimental
+    public static class GCJoinStageUtil
+    {
+        public static bool IsRJoinStage(GCJoinStage stage) =>
+            stage == GCJoinStage.r_join_update_card_bundle;
+
+
+        // Some stages only happen in background  GCs.
+        internal static GcBackgroundKind? TryGetBackgroundKindFromJoinStage(GCJoinStage stage)
+        {
+            if (TryGetThreadKindFromJoinStage(stage) == GCThreadKind.Background)
+            {
+                // Only background GCs can have background threads.
+                return GcBackgroundKind.Background;
+            }
+            else
+            {
+                switch (stage)
+                {
+                    case GCJoinStage.start_bgc:
+                    case GCJoinStage.restart_ee:
+                        return GcBackgroundKind.Background;
+                    default:
+                        return null;
+                }
+            }
+        }
+
+        [Obsolete] // allow us to use experimental PerfView features
+        public static GCThreadKind? TryGetThreadKindFromJoinStage(GCJoinStage stage)
+        {
+            switch (stage)
+            {
+                case GCJoinStage.init_cpu_mapping:
+                case GCJoinStage.allow_fgc:
+                case GCJoinStage.bgc_sweep:
+                    throw new Exception("These joins appear to never be used, don't know if BGC");
+
+                case GCJoinStage.restart:
+                case GCJoinStage.done:
+                case GCJoinStage.scan_dependent_handles:
+                case GCJoinStage.rescan_dependent_handles:
+                case GCJoinStage.scan_sizedref_done:
+                case GCJoinStage.null_dead_short_weak:
+                case GCJoinStage.scan_finalization:
+                case GCJoinStage.null_dead_long_weak:
+                case GCJoinStage.null_dead_syncblk:
+                case GCJoinStage.verify_objects_done:
+                case GCJoinStage.verify_copy_table:
+                    // Used in both ways
+                    return null;
+
+                case GCJoinStage.generation_determined:
+                case GCJoinStage.begin_mark_phase:
+                case GCJoinStage.decide_on_compaction:
+                case GCJoinStage.rearrange_segs_compaction:
+                case GCJoinStage.adjust_handle_age_compact:
+                case GCJoinStage.adjust_handle_age_sweep:
+                case GCJoinStage.begin_relocate_phase:
+                case GCJoinStage.relocate_phase_done:
+                case GCJoinStage.start_bgc:
+                case GCJoinStage.bgc_after_ephemeral:
+                case GCJoinStage.r_join_update_card_bundle:
+                case GCJoinStage.minimal_gc:
+                case GCJoinStage.after_commit_soh_no_gc:
+                case GCJoinStage.expand_loh_no_gc:
+                case GCJoinStage.final_no_gc:
+                    return GCThreadKind.Foreground;
+
+                case GCJoinStage.restart_ee:
+                case GCJoinStage.concurrent_overflow:
+                case GCJoinStage.suspend_ee:
+                case GCJoinStage.suspend_ee_verify:
+                case GCJoinStage.restart_ee_verify:
+                case GCJoinStage.set_state_free:
+                case GCJoinStage.after_absorb:
+                case GCJoinStage.after_reset:
+                case GCJoinStage.after_ephemeral_sweep:
+                case GCJoinStage.after_profiler_heap_walk:
+                case GCJoinStage.disable_software_write_watch:
+                    return GCThreadKind.Background;
+
+                default:
+                    throw new Exception($"Unexpected join stage: {stage}");
+            }
+        }
+    }
+
+    internal readonly struct GCAndThreadKind
+    {
+        public readonly TraceGC GC;
+        public readonly GCThreadKind ThreadKind;
+
+        public GCAndThreadKind(TraceGC gc, GCThreadKind threadKind)
+        {
+            GC = gc;
+            ThreadKind = threadKind;
+        }
+    }
+
+    internal readonly struct GCAndJoinStage
+    {
+        public readonly TraceGC GC;
+        public readonly GCJoinStage JoinStage;
+
+        public GCAndJoinStage(TraceGC gc, GCJoinStage joinStage)
+        {
+            GC = gc;
+            JoinStage = joinStage;
+        }
+    }
 
     /// <summary>
     /// Garbage Collector (GC) specific details about this process
@@ -1516,16 +1724,359 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
         public List<TraceGC> GCs { get { return m_gcs; } }
 
         #region private
-        internal static TraceGC GetCurrentGC(TraceLoadedDotNetRuntime proc, double timeStampRelativeMSec, bool mustBeStarted = false, int? expectedGCNumber = null)
+        // Stores the last two join IDs. (Possible that we'll get some events from PrevJoinId while CurJoinId is still going.)
+        [Obsolete]
+        internal readonly struct GCJoinState
+        {
+            public readonly uint? HeapCount;
+            // These don't change once set.
+            public readonly HashSet<ThreadID> FgThreadIDs;
+            public readonly HashSet<ThreadID> BgThreadIDs;
+            // Restart end is always the very last event for a join, so that tells us we shouldn't see any more events for it.
+            //public readonly int Prev2JoinId;
+            //public readonly bool Prev2JoinSeenRestartEnd;
+            public readonly GCJoinStage PrevJoinId;
+            //public readonly bool PrevJoinSeenRestartEnd;
+            public readonly GCJoinStage CurJoinStage;
+            // We need to see a FirstJoin or LastJoin with the current ID before CurJoinSEenRestartEnd should be set.
+            //public readonly bool AnticipatingRestartEnd;
+            public readonly ThreadID? CurJoinExpectingRestartThreadId;
+            public readonly bool CurJoinSeenRestartEnd;
+
+            private GCJoinState(
+                uint? heapCount,
+                HashSet<ThreadID> fgThreadIDs,
+                HashSet<ThreadID> bgThreadIDs,
+                GCJoinStage prevJoinId,
+                GCJoinStage curJoinId,
+                ThreadID? curJoinExpectingRestartThreadId,
+                bool curJoinSeenRestartEnd)
+            {
+                HeapCount = heapCount;
+                FgThreadIDs = fgThreadIDs;
+                BgThreadIDs = bgThreadIDs;
+                PrevJoinId = prevJoinId;
+                CurJoinStage = curJoinId;
+                CurJoinExpectingRestartThreadId = curJoinExpectingRestartThreadId;
+                CurJoinSeenRestartEnd = curJoinSeenRestartEnd;
+            }
+
+            public GCThreadKind GetThreadKind(ThreadID threadID, GCJoinStage joinStage)
+            {
+                if (FgThreadIDs.Contains(threadID))
+                {
+                    if (GCJoinStageUtil.TryGetThreadKindFromJoinStage(joinStage) == GCThreadKind.Background)
+                    {
+                        throw new Exception($"Thread {threadID} is in FgThreadIDs, but stage {joinStage} is background only");
+                    }
+
+                    return GCThreadKind.Foreground;
+                }
+                else if (BgThreadIDs.Contains(threadID))
+                {
+                    if (GCJoinStageUtil.TryGetThreadKindFromJoinStage(joinStage) == GCThreadKind.Foreground)
+                    {
+                        throw new Exception($"Thread {threadID} is in BgTHreadIDs, but stage {joinStage} is foreground only");
+                    }
+
+                    return GCThreadKind.Background;
+                }
+                else
+                {
+                    throw new Exception($"Unexpected thread ID {threadID}");
+                }
+            }
+
+            public static GCJoinState Fresh(GCJoinStage joinStage, bool expectRestart, ThreadID threadId, uint? heapCount) =>
+                new GCJoinState(
+                    heapCount: heapCount,
+                    fgThreadIDs: new HashSet<ThreadID>(),
+                    bgThreadIDs: new HashSet<ThreadID>(),
+                    prevJoinId: GCJoinStage.restart,
+                    curJoinId: GCJoinStage.restart,
+                    curJoinExpectingRestartThreadId: null,
+                    curJoinSeenRestartEnd: false
+                ).WithNewCur(joinStage, expectRestart, threadId);
+            
+            public bool HasJoinStage(GCJoinStage joinStage) =>
+                joinStage == PrevJoinId || joinStage == CurJoinStage;
+
+            public GCJoinState WithAnticipatingRestartEnd()
+            {
+                throw new Exception("TODO");
+                //Debug.Assert(!CurJoinSeenRestartEnd, "Anticipating a restart end that already happened");
+                //return new GcJoinState(prevJoinId: PrevJoinId, curJoinId: CurJoinId, /*anticipatingRestartEnd: true,*/ curJoinSeenRestartEnd: CurJoinSeenRestartEnd);
+            }
+
+            // Default for null is an empty string which isn't helpful
+            private static string NullableToString<T>(T? value) where T : struct
+            {
+                return value == null ? "null" : value.Value.ToString();
+            }
+
+            public GCJoinState WithSeenRestartStart(ThreadID threadId)
+            {
+                if (CurJoinExpectingRestartThreadId != threadId)
+                {
+                    throw new Exception($"Restart start: expecting restart thread ID to be {NullableToString(CurJoinExpectingRestartThreadId)}, got {threadId} instead");
+                }
+
+                return this;
+            }
+
+            //TODO: kill "caller"
+            public GCJoinState WithSeenRestartEnd(string caller, ThreadID threadID)
+            {
+                if (CurJoinExpectingRestartThreadId != threadID)
+                {
+                    throw new Exception($"Restart end: expecting restart thread ID to be {NullableToString(CurJoinExpectingRestartThreadId)}, got {threadID} instead");
+                }
+
+                Debug.Assert(!CurJoinSeenRestartEnd, $"Should not see two restart ends from {caller}");
+                // If haven't seen prevJoinSeenRestartEnd, fill that in, else fill in curJoinSeenRestartEnd
+                Debug.Assert(FgThreadIDs.Contains(threadID) || BgThreadIDs.Contains(threadID));
+                return new GCJoinState(
+                    heapCount: HeapCount,
+                    fgThreadIDs: FgThreadIDs,
+                    bgThreadIDs: BgThreadIDs,
+                    prevJoinId: PrevJoinId,
+                    curJoinId: CurJoinStage,
+                    curJoinExpectingRestartThreadId: null,
+                    curJoinSeenRestartEnd: true);
+            }
+
+            public GCJoinState WithJoinStart(GCJoinStage stage, ThreadID threadID, bool expectRestart)
+            {
+                if (stage != CurJoinStage)
+                {
+                    throw new Exception($"JoinStart for {stage} but we're on {CurJoinStage}");
+                }
+
+                if (CurJoinExpectingRestartThreadId != null)
+                {
+                    // I've observed Join Start events coming out a fraction of a millisecond after a LastJoin Start.
+                    // throw new Exception($"Expecting restart from thread {CurJoinExpectingRestartThreadId}, should not get a JoinStart from thread {threadID}");
+                    if (expectRestart)
+                    {
+                        throw new Exception($"Already expecting a restart from thread {CurJoinExpectingRestartThreadId}, should not get another FirstJoin/LastJoin");
+                    }
+                }
+
+                if (CurJoinSeenRestartEnd)
+                {
+                    throw new Exception($"Expecting restart end, should not get any more JoinStarts");
+                }
+
+                if (!FgThreadIDs.Contains(threadID) && !BgThreadIDs.Contains(threadID))
+                {
+                    // This should only happen on a few stages.
+                    switch (stage)
+                    {
+                        case GCJoinStage.generation_determined:
+                        case GCJoinStage.begin_mark_phase:
+                            Debug.Assert(GCJoinStageUtil.TryGetThreadKindFromJoinStage(stage) == GCThreadKind.Foreground);
+                            FgThreadIDs.Add(threadID);
+                            if (HeapCount != null && FgThreadIDs.Count > HeapCount)
+                            {
+                                throw new Exception($"Seen {FgThreadIDs.Count} foreground threads but should be only {HeapCount} heaps");
+                            }
+                            break;
+
+                        case GCJoinStage.restart_ee:
+                            Debug.Assert(GCJoinStageUtil.TryGetThreadKindFromJoinStage(stage) == GCThreadKind.Background);
+                            BgThreadIDs.Add(threadID);
+                            if (HeapCount != null && BgThreadIDs.Count > HeapCount)
+                            {
+                                throw new Exception($"Seen {BgThreadIDs.Count} foreground threads but should be only {HeapCount} heaps");
+                            }
+                            break;
+
+                        default:
+                            Console.WriteLine("Foreground threads: " + string.Join(", ", FgThreadIDs));
+                            Console.WriteLine("Background threads: " + string.Join(", ", BgThreadIDs));
+                            throw new Exception($"Unexpected new join at stage {stage} on thread {threadID}");
+                    }
+                    // Hm
+                    // If we have 0 foreground threads, add as foreground.
+                }
+
+                return new GCJoinState(
+                    heapCount: HeapCount,
+                    fgThreadIDs: FgThreadIDs,
+                    bgThreadIDs: BgThreadIDs,
+                    prevJoinId: PrevJoinId,
+                    curJoinId: CurJoinStage,
+                    curJoinExpectingRestartThreadId: expectRestart ? threadID : CurJoinExpectingRestartThreadId,
+                    curJoinSeenRestartEnd: CurJoinSeenRestartEnd);
+
+            }
+
+            public GCJoinState WithNewCur(GCJoinStage newCurJoinStage, bool expectRestart, ThreadID threadID)
+            {
+                if (CurJoinExpectingRestartThreadId != null)
+                    throw new Exception("Adding new cur but never saw restart end");
+                Debug.Assert(newCurJoinStage != GCJoinStage.restart);
+
+                return new GCJoinState(
+                    heapCount: HeapCount,
+                    fgThreadIDs: FgThreadIDs,
+                    bgThreadIDs: BgThreadIDs,
+                    prevJoinId: CurJoinStage,
+                    curJoinId: newCurJoinStage,
+                    curJoinExpectingRestartThreadId: null,
+                    curJoinSeenRestartEnd: false
+                ).WithJoinStart(newCurJoinStage, threadID, expectRestart);
+            }
+
+
+            public override string ToString()
+            {
+                string fgThreadIDs = string.Join("|", FgThreadIDs);
+                string bgThreadIDs = string.Join("|", BgThreadIDs);
+                return $"GcJoinState(fg: {ThreadIDsToString(FgThreadIDs)}, bg: {ThreadIDsToString(BgThreadIDs)}, prev: {PrevJoinId}, cur: {CurJoinStage}, expectingRestart: {CurJoinExpectingRestartThreadId}, seenRestart: {CurJoinSeenRestartEnd})";
+            }
+
+            private static string ThreadIDsToString(HashSet<ThreadID> threadIDs)
+            {
+                if (threadIDs.Any())
+                {
+                    return string.Join("|", threadIDs);
+                }
+                else
+                {
+                    return "empty";
+                }
+            }
+        }
+
+        /*
+        private static void UpdateJoinState(TraceGC gc, JoinFoo joinFoo)
+        {
+            Console.WriteLine($"UpdateJoinState: gc {gc.Number} {gc.GetHashCode()}");
+            bool haveOldState = joinFoo.GcJoinStates.TryGetValue(gc, out GcJoinState oldState);
+
+            //if (haveOldState)
+            //{
+            //    Console.WriteLine($"Have old state: {oldState}");
+            //}
+
+            GcJoinStage joinId = joinFoo.JoinId;
+            ThreadId threadId = Todo<ThreadId>();
+
+            if (joinFoo.Type == GcJoinType.Restart)
+            {
+                if (haveOldState && joinFoo.Time == GcJoinTime.End && oldState.AnticipatingRestartEnd)
+                {
+                    joinFoo.GcJoinStates[gc] = oldState.WithSeenRestartEnd("E", threadId);
+                }
+            }
+            else
+            {
+                if (haveOldState)
+                {
+                    if (oldState.HasJoinId(joinId))
+                    {
+                        if (joinId == oldState.PrevJoinId)
+                        {
+                            if (joinFoo.Time == GcJoinTime.Start)
+                            {
+                                throw new Exception($"Should not see new 'start' events for the prev join!");
+                            }
+                        }
+
+                        if (ShouldAnticipateRestartEnd(joinFoo.Type))
+                        {
+                            joinFoo.GcJoinStates[gc] = oldState.WithAnticipatingRestartEnd();
+                        }
+                    }
+                    else
+                    {
+                        joinFoo.GcJoinStates[gc] = oldState.WithNewCur(joinId);
+                    }
+                }
+                else
+                {
+                    joinFoo.GcJoinStates[gc] = GcJoinState.Fresh(joinId);
+                }
+
+                /*
+                if (haveOldState && oldState.JoinId != joinFoo.JoinId)
+                {
+                    // We didn't know how many joins there would be so left this open.
+                    // But now we're clearly on a new join.
+                    Debug.Assert(oldState.NJoinsLeft == null, "Join ID should match");
+                    joinFoo.GcJoinStates.Remove(gc);
+                }
+
+                if (haveOldState && oldState.JoinId == joinFoo.JoinId)
+                {
+                    Console.WriteLine($"oldState: {oldState}");
+                    GcJoinState newState = oldState.Decr();
+                    if (newState.NJoinsLeft == 0)
+                    {
+                        joinFoo.GcJoinStates.Remove(gc);
+                    }
+                    else
+                    {
+                        joinFoo.GcJoinStates[gc] = newState;
+                    }
+                }
+                else
+                {
+                    // This is the first join to happen.
+                    if (joinFoo.HeapCount > 1 && joinFoo.Type != GcJoinType.FirstJoin && joinFoo.Type != GcJoinType.Join)
+                    {
+                        throw new Exception($"Unexpected first join type: {joinFoo.Type}");
+                    }
+
+                    joinFoo.GcJoinStates[gc] = new GcJoinState(joinFoo.JoinId, joinFoo.HeapCount > 1 ? (uint)joinFoo.HeapCount - 1 : (uint?)null);
+                    Console.WriteLine($"Create new state {joinFoo.GcJoinStates[gc]}");
+                }
+                * /
+            }
+
+            if (joinFoo.GcJoinStates.TryGetValue(gc, out GcJoinState newState))
+            {
+                Console.WriteLine($"New state: {newState}");
+            }
+            else
+            {
+                Console.WriteLine("New state: none");
+            }
+        }
+
+        private static bool ShouldAnticipateRestartEnd(GcJoinType type)
+        {
+            switch (type)
+            {
+                case GcJoinType.FirstJoin:
+                case GcJoinType.LastJoin:
+                    return true;
+                case GcJoinType.Join:
+                case GcJoinType.Restart:
+                    return false;
+                default:
+                    throw new Exception(type.ToString());
+            }
+        }
+        */
+
+        [Obsolete]
+        internal static TraceGC GetCurrentGC(
+            TraceLoadedDotNetRuntime proc,
+            double timeStampRelativeMSec,
+            bool mustBeStarted = false,
+            int? expectedGCNumber = null)
         {
             IReadOnlyList<TraceGC> gcs = proc.GC.GCs;
             if (gcs.Count > 0)
             {
                 TraceGC last = gcs.Last();
                 // Give a 1ms buffer, occasionally a join end event will come out a fraction of a millisecond after the GC is over
-                double lastPauseEndRelativeMSecSafe = last.PauseEndRelativeMSec + 1;
+                //double lastPauseEndRelativeMSecSafe = last.PauseEndRelativeMSec + 1;
 
-                bool bgsIsFinished = proc.GC.m_stats.currentBGC == null;
+                bool bgcIsFinished = proc.GC.m_stats.currentBGC == null;
+                //TODO: don't need currentOrFinishedBGC any more here
                 TraceGC bgc = proc.GC.m_stats.currentBGC ?? proc.GC.m_stats.currentOrFinishedBGC;
 
                 if (expectedGCNumber != null)
@@ -1541,20 +2092,562 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 }
                 else
                 {
-                    if ((!last.IsComplete || timeStampRelativeMSec < lastPauseEndRelativeMSecSafe) && (!mustBeStarted || last.SeenStartEvent))
+                    if (!mustBeStarted || last.SeenStartEvent)
                     {
-                        return last;
+                        if (!last.IsComplete)
+                        {
+                            return last;
+                        }
                     }
 
-                    if (bgc != null && (!bgsIsFinished || timeStampRelativeMSec < bgc.PauseEndRelativeMSec + 1))
+                    if (bgc != null && (!mustBeStarted || bgc.SeenStartEvent))
                     {
-                        Debug.Assert(bgc.SeenStartEvent);
-                        Debug.Assert(bgc.Type == GCType.BackgroundGC);
-                        return bgc;
+                        if (!bgcIsFinished)// || timeStampRelativeMSec < bgc.PauseEndRelativeMSec + 1))
+                        {
+                            Debug.Assert(bgc.SeenStartEvent);
+                            Debug.Assert(bgc.Type == GCType.BackgroundGC);
+                            return bgc;
+                        }
                     }
                 }
             }
             return null;
+
+        }
+
+        /*
+        [Obsolete]
+        internal static TraceGC GetCurrentGCOld(
+            TraceLoadedDotNetRuntime proc,
+            double timeStampRelativeMSec,
+            bool mustBeStarted = false,
+            int? expectedGCNumber = null,
+            JoinFoo? joinFoo = null)
+        {
+            IReadOnlyList<TraceGC> gcs = proc.GC.GCs;
+            if (gcs.Count > 0)
+            {
+                TraceGC last = gcs.Last();
+                // Give a 1ms buffer, occasionally a join end event will come out a fraction of a millisecond after the GC is over
+                //double lastPauseEndRelativeMSecSafe = last.PauseEndRelativeMSec + 1;
+
+                bool bgcIsFinished = proc.GC.m_stats.currentBGC == null;
+                //TODO: don't need currentOrFinishedBGC any more here
+                TraceGC bgc = proc.GC.m_stats.currentBGC ?? proc.GC.m_stats.currentOrFinishedBGC;
+
+                if (expectedGCNumber != null)
+                {
+                    Debug.Assert(joinFoo == null);
+                    if (bgc != null && expectedGCNumber == bgc.Number)
+                    {
+                        return bgc;
+                    }
+                    else if (last != null && expectedGCNumber == last.Number)
+                    {
+                        return last;
+                    }
+                }
+                else
+                {
+                    string bgcStr = bgc == null ? "null" : bgc.Number.ToString();
+
+                    if (joinFoo != null)
+                    {
+                        GcThreadKind? threadKind = GcJoinStageUtil.TryGetThreadKindFromJoinStage((GcJoinStage)joinFoo.Value.JoinId);
+
+                        Console.WriteLine($"Last is {last.Number}, bgc is {bgcStr}");
+                        // Use the BGC if this completes a join started there.
+                        if (threadKind != GcThreadKind.Foreground && bgc != null)
+                        {
+                            GcJoinState? bgcState = joinFoo.Value.GcJoinStates.TryGetValue(bgc, out GcJoinState bgs) ? bgs : (GcJoinState?)null;
+                            if (bgcState != null && bgcState.Value.Has(joinFoo.Value)) //bgcState.NJoinsLeft > 0 && bgcState.JoinId == joinFoo.Value.JoinId)
+                            {
+                                Console.WriteLine($"Going with BGC {bgcState}");
+                                // Completed GC never updates join state.
+                                // joinFoo.Value.GcJoinStates[bgc] = bgcState.Decr();
+                                return bgc;
+                            }
+                            else
+                            {
+                                Console.WriteLine($"Not using bgc, its state is {bgcState} and we're on join {joinFoo.Value.JoinId}");
+                            }
+                        }
+
+                        GcJoinState? lastState = joinFoo.Value.GcJoinStates.TryGetValue(last, out GcJoinState s) ? s : (GcJoinState?)null;
+                        if (lastState != null && lastState.Value.Has(joinFoo.Value))
+                        {
+                            Console.WriteLine($"Going with last {lastState}");
+                            // Completed GC never updates join state.
+                            //joinFoo.Value.GcJoinStates[last] = lastState.Decr();
+                            return last;
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Not using last, its state is {lastState} and we're on join {joinFoo.Value.JoinId}");
+                        }
+
+                        Console.WriteLine("Neither state matches, go to normal case");
+                    }
+
+                    if (!mustBeStarted || last.SeenStartEvent)
+                    {
+                        if (!last.IsComplete)
+                        {
+                            if (joinFoo != null)
+                            {
+                                UpdateJoinState(last, joinFoo.Value);
+                            }
+                            return last;
+                        }
+                    }
+
+                    if (bgc != null && (!mustBeStarted || bgc.SeenStartEvent))
+                    {
+                        if (!bgcIsFinished)// || timeStampRelativeMSec < bgc.PauseEndRelativeMSec + 1))
+                        {
+                            Debug.Assert(bgc.SeenStartEvent);
+                            Debug.Assert(bgc.Type == GCType.BackgroundGC);
+                            if (joinFoo != null)
+                            {
+                                UpdateJoinState(last, joinFoo.Value);
+                            }
+                            return bgc;
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+        */
+
+        // TODO:KILL (just use .Value)
+        static T NonNull<T>(T? value) where T : struct
+        {
+            if (value == null)
+                throw new Exception("Value was null");
+            return value.Value;
+        }
+        static T NonNull<T>(T value) where T : class
+        {
+            if (value == null)
+                throw new Exception("Value was null");
+            return value;
+        }
+
+        private static V? TryGet<K, V>(IReadOnlyDictionary<K, V> d, K k) where V : struct
+        {
+            return d.TryGetValue(k, out V v) ? v : (V?) null;
+        }
+
+        private static string ShowGc(TraceGC gc)
+        {
+            return gc == null ? "null" : $"n: {gc.Number}; hash: {gc.GetHashCode()}; started: {gc.SeenStartEvent}; complete: {gc.IsComplete}; type: {gc.Type}";
+        }
+
+        private static void PrintGCs(TraceLoadedDotNetRuntime proc, IReadOnlyDictionary<TraceGC, GCJoinState> joinStates, string name, bool showRes, GCAndThreadKind? res)
+        {
+            if (TraceLoadedDotNetRuntime.PRINT)
+            {
+                IReadOnlyList<TraceGC> gcs = proc.GC.GCs;
+                TraceGC last = gcs.Count == 0 ? null : gcs.Last();
+                TraceGC bgc = proc.GC.m_stats.currentBGC ?? proc.GC.m_stats.currentOrFinishedBGC;
+
+                if (res == null)
+                {
+                    Console.WriteLine($"  last: {ShowGc(last)} ||| bgc: {(bgc == last ? "same" : ShowGc(bgc))}");
+                }
+                Console.WriteLine($"  {name}LastState: {(last == null ? null : TryGet(joinStates, last))}");
+                Console.WriteLine($"  {name}BgcState: {(bgc == null ? null : TryGet(joinStates, bgc))}");
+                if (showRes)
+                {
+                    if (res == null)
+                    {
+                        Console.WriteLine("  returning null");
+                    }
+                    else
+                    {
+                        Debug.Assert(res.Value.GC == last || res.Value.GC == bgc);
+                        string gcName = res.Value.GC == last ? "last" : "bgc";
+                        Console.WriteLine($"  returning {gcName} with thread kind {res.Value.ThreadKind}");
+                    }
+                }
+            }
+        }
+
+        internal static GCAndThreadKind? GetCurrentGCForJoin(
+            TraceLoadedDotNetRuntime proc,
+            uint? heapCount,
+            double timeStampRelativeMSec,
+            Dictionary<TraceGC, GCJoinState> joinStates,
+            GCJoinStage joinStage,
+            GcJoinTime time,
+            GcJoinType type,
+            ThreadID threadId)
+        {
+            PrintGCs(proc, joinStates, "old", showRes: false, res: null);
+
+            GCAndJoinStage? resWithStage = GetCurrentGCForJoinWorker(proc, timeStampRelativeMSec, joinStates, joinStage, time, type, threadId, heapCount);
+            GCAndThreadKind? res;
+            if (resWithStage == null)
+            {
+                res = (GCAndThreadKind?)null;
+            }
+            else
+            {
+                GCThreadKind threadKind = joinStates[resWithStage.Value.GC].GetThreadKind(threadId, joinStage);
+                res = new GCAndThreadKind(resWithStage.Value.GC, threadKind);
+
+                if (res != null && res.Value.GC.IsComplete)
+                {
+                    // Shouldn't be join events more than 1ms after the end.
+                    Debug.Assert(res.Value.GC.PauseEndRelativeMSec < timeStampRelativeMSec + 1.0);
+                }
+            }
+
+            PrintGCs(proc, joinStates, "new", showRes: true, res: res);
+            return res;
+        }
+
+        private static GCAndJoinStage? GetCurrentGCForJoinWorker(
+            TraceLoadedDotNetRuntime proc,
+            double timeStampRelativeMSec,
+            Dictionary<TraceGC, GCJoinState> joinStates,
+            GCJoinStage joinStage,
+            GcJoinTime time,
+            GcJoinType type,
+            ThreadID threadId,
+            uint? heapCount)
+        {
+            bool bgcIsFinished = proc.GC.m_stats.currentBGC == null;
+            //TODO: don't need currentOrFinishedBGC any more here
+            TraceGC bgc = proc.GC.m_stats.currentBGC ?? proc.GC.m_stats.currentOrFinishedBGC;
+
+            IReadOnlyList<TraceGC> gcs = proc.GC.GCs;
+            if (gcs.Count == 0)
+            {
+                return null;
+            }
+
+            TraceGC last = gcs.Last();
+
+            GCJoinState? oldLastState = TryGet(joinStates, last);
+            GCJoinState? oldBgcState = bgc == null ? null : TryGet(joinStates, bgc);
+
+            switch (time)
+            {
+                case GcJoinTime.Start:
+                    switch (type)
+                    {
+                        case GcJoinType.FirstJoin:
+                        case GcJoinType.LastJoin:
+                        case GcJoinType.Join:
+                        {
+                            TraceGC gc = HandleJoinStart(
+                               joinStates: joinStates,
+                               oldLastState: oldLastState,
+                               oldBgcState: oldBgcState,
+                               last: last,
+                               bgc: bgc,
+                               threadID: threadId,
+                               joinStage: joinStage,
+                               expectRestart: type != GcJoinType.Join,
+                               heapCount: heapCount);
+                            return new GCAndJoinStage(gc, joinStage);
+                        }
+                        case GcJoinType.Restart:
+                            return HandleRestartStart(
+                                joinStates: joinStates, oldLastState: oldLastState, oldBgcState: oldBgcState, last: last, bgc: bgc, threadId: threadId);
+                        default:
+                            throw new Exception(type.ToString());
+                    }
+                case GcJoinTime.End:
+                    switch (type)
+                    {
+                        case GcJoinType.FirstJoin:
+                        case GcJoinType.LastJoin:
+                        case GcJoinType.Join:
+                        {
+                            TraceGC gc = HandleJoinEnd(
+                                joinStates: joinStates, oldLastState: oldLastState, oldBgcState: oldBgcState, last: last, bgc: bgc, threadID: threadId, joinStage: joinStage);
+                            return new GCAndJoinStage(gc, joinStage);
+                        }
+                        case GcJoinType.Restart:
+                            return HandleRestartEnd(
+                                joinStates: joinStates, oldLastState: oldLastState, oldBgcState: oldBgcState, last: last, bgc: bgc, threadId: threadId);
+                        default:
+                            throw new Exception(type.ToString());
+                    }
+                default:
+                    throw new Exception(time.ToString());
+            }
+        }
+
+        private static TraceGC HandleJoinStart(
+            Dictionary<TraceGC, GCJoinState> joinStates,
+            GCJoinState? oldLastState,
+            GCJoinState? oldBgcState,
+            TraceGC last,
+            TraceGC bgc,
+            ThreadID threadID,
+            GCJoinStage joinStage,
+            bool expectRestart,
+            uint? heapCount)
+        {
+            if (last.Type == GCType.BackgroundGC && last != bgc)
+            {
+                throw new Exception("Last is background?");
+            }
+            if (bgc != null && bgc.Type != GCType.BackgroundGC)
+            {
+                throw new Exception("BGC not a bgc?");
+            }
+
+            TraceGC gc = ChooseGcForJoinStart(last, bgc, joinStage);
+            Debug.Assert(gc == last || gc == bgc);
+            Debug.Assert((gc.Type == GCType.BackgroundGC) == (gc == bgc));
+            GCJoinState? oldState = gc == last ? oldLastState : oldBgcState;
+
+            if (oldState == null)
+            {
+                joinStates[gc] = GCJoinState.Fresh(joinStage, expectRestart, threadID, heapCount);
+            }
+            else if (!NonNull(oldState).HasJoinStage(joinStage))
+            {
+                joinStates[gc] = NonNull(oldState).WithNewCur(joinStage, expectRestart, threadID);
+            }
+            else
+            {
+                joinStates[gc] = NonNull(oldState).WithJoinStart(joinStage, threadID, expectRestart: expectRestart);
+            }
+
+            return gc;
+        }
+
+        private static TraceGC ChooseGcForJoinStart(
+            TraceGC last,
+            TraceGC bgc,
+            GCJoinStage joinStage)
+        {
+            switch (GCJoinStageUtil.TryGetBackgroundKindFromJoinStage(joinStage))
+            {
+                case GcBackgroundKind.Foreground:
+                    return last;
+                case GcBackgroundKind.Background:
+                    return NonNull(bgc);
+                case null:
+                    return last.IsComplete ? NonNull(bgc) : last;
+                default:
+                    throw new Exception();
+            }
+        }
+
+        private static GCAndJoinStage HandleRestartStart(
+            Dictionary<TraceGC, GCJoinState> joinStates,
+            GCJoinState? oldLastState,
+            GCJoinState? oldBgcState,
+            TraceGC last,
+            TraceGC bgc,
+            ThreadID threadId)
+        {
+            if (oldLastState != null && NonNull(oldLastState).CurJoinExpectingRestartThreadId == threadId)
+            {
+                joinStates[last] = NonNull(oldLastState).WithSeenRestartStart(threadId);
+                return new GCAndJoinStage(last, oldLastState.Value.CurJoinStage);
+            }
+            else
+            {
+                joinStates[NonNull(bgc)] = NonNull(oldBgcState).WithSeenRestartStart(threadId);
+                return new GCAndJoinStage(NonNull(bgc), oldBgcState.Value.CurJoinStage);
+            }
+        }
+
+        private static TraceGC HandleJoinEnd(
+            Dictionary<TraceGC, GCJoinState> joinStates,
+            GCJoinState? oldLastState,
+            GCJoinState? oldBgcState,
+            TraceGC last,
+            TraceGC bgc,
+            GCJoinStage joinStage,
+            ThreadID threadID)
+        {
+            bool lastHas = oldLastState != null && oldLastState.Value.HasJoinStage(joinStage);
+            bool bgcHas = oldBgcState != null && oldBgcState.Value.HasJoinStage(joinStage);
+
+            if (lastHas && bgcHas)
+            {
+                if (last == bgc)
+                {
+                    return last;
+                }
+                else
+                {
+                    // Go with the *current* state.
+                    bool lastHasCurrent = oldLastState.Value.CurJoinStage == joinStage;
+                    bool bgcHasCurrent = oldBgcState.Value.CurJoinStage == joinStage;
+                    if (lastHasCurrent && bgcHasCurrent)
+                    {
+                        // Prefer a non-complete GC.
+                        if (last.IsComplete && bgc.IsComplete)
+                        {
+                            if (oldBgcState.Value.BgThreadIDs.Contains(threadID))
+                            {
+                                return bgc;
+                            }
+                            else
+                            {
+                                // If this is a foreground thread, presume it's for a foreground gc.
+                                return last;
+                            }
+                        }
+                        else if (last.IsComplete)
+                        {
+                            return bgc;
+                        }
+                        else if (bgc.IsComplete)
+                        {
+                            return last;
+                        }
+                        else
+                        {
+                            throw new Exception("TODO2");
+                        }
+                    }
+                    else if (lastHasCurrent)
+                    {
+                        return last;
+                    }
+                    else if (bgcHasCurrent)
+                    {
+                        return bgc;
+                    }
+                    else
+                    {
+                        throw new Exception("TODO3");
+                    }
+                }
+            }
+            else if (lastHas)
+            {
+                return last;
+            }
+            else if (bgcHas)
+            {
+                return bgc;
+            }
+            else
+            {
+                if (TraceLoadedDotNetRuntime.PRINT)
+                {
+                    Console.WriteLine("Ignoring join end");
+                }
+                return null;
+            }
+
+            /*
+
+            // TODO: cases are (or should be) similar, combine
+            if (last.IsComplete)
+            {
+                // Last is complete, but may still see join ends
+                if (oldLastState == null)
+                {
+                    throw new Exception("Should have oldLastState");
+                }
+
+                if (joinStage == NonNull(oldLastState).CurJoinStage)
+                {
+                    return last;
+                }
+                else if (bgc == null)
+                {
+                    Console.WriteLine("Ignoring join end");
+                    return null;
+                }
+                else
+                {
+                    if (!(oldBgcState != null && NonNull(oldBgcState).HasJoinStage(joinStage)))
+                    {
+                        throw new Exception($"bgc: join end should have had a previous join start for {joinStage}");
+                    }
+                    return bgc;
+                }
+            }
+            else
+            {
+                if (oldBgcState != null && NonNull(oldBgcState).HasJoinStage(joinStage))
+                {
+                    return bgc;
+                }
+                else
+                {
+                    if (oldLastState == null)
+                    {
+                        throw new Exception("Should have last state");
+                    }
+                    if (!NonNull(oldLastState).HasJoinStage(joinStage))
+                    {
+                        throw new Exception("Should have seen previous join");
+                    }
+                    return last;
+                }
+            }
+            */
+        }
+
+        private static GCAndJoinStage HandleRestartEnd(
+            Dictionary<TraceGC, GCJoinState> joinStates,
+            GCJoinState? oldLastState,
+            GCJoinState? oldBgcState,
+            TraceGC last,
+            TraceGC bgc,
+            ThreadID threadId)
+        {
+            if (last.IsComplete)
+            {
+                if (oldLastState == null)
+                {
+                    throw new Exception("Missing oldLastState");
+                }
+
+                if (!NonNull(oldLastState).CurJoinSeenRestartEnd)
+                {
+                    joinStates[last] = NonNull(oldLastState).WithSeenRestartEnd("B", threadId);
+                    return new GCAndJoinStage(last, oldLastState.Value.CurJoinStage);
+                }
+                else
+                {
+                    // Already seen restart end, so this must be a bgc restart end.
+                    if (bgc != null)
+                    {
+                        if (oldBgcState == null)
+                        {
+                            throw new Exception("Missing oldBgcState");
+                        }
+
+                        joinStates[bgc] = NonNull(oldBgcState).WithSeenRestartEnd("A", threadId);
+                    }
+                    return new GCAndJoinStage(bgc, oldBgcState.Value.CurJoinStage);
+                }
+            }
+            else
+            {
+                if (bgc != null)
+                {
+                    if (oldBgcState == null)
+                    {
+                        throw new Exception("Should have previous state");
+                    }
+
+                    if (!NonNull(oldBgcState).CurJoinSeenRestartEnd && NonNull(oldBgcState).CurJoinExpectingRestartThreadId == threadId)
+                    {
+                        joinStates[bgc] = NonNull(oldBgcState).WithSeenRestartEnd("C", threadId);
+                        return new GCAndJoinStage(bgc, oldBgcState.Value.CurJoinStage);
+                    }
+                }
+
+                joinStates[last] = NonNull(oldLastState).WithSeenRestartEnd("D", threadId);
+                return new GCAndJoinStage(last, oldLastState.Value.CurJoinStage); ;
+            }
         }
 
         internal List<TraceGC> m_gcs = new List<TraceGC>();
@@ -2966,36 +4059,36 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
         }
 
-        internal void AddServerGcThreadSwitch(ThreadWorkSpan cswitch, bool isBGCThread)
+        internal void AddServerGcThreadSwitch(ThreadWorkSpan cswitch, GCThreadKind? threadKind)
         {
             if (cswitch.ProcessorNumber >= 0 && cswitch.ProcessorNumber < ServerGcHeapHistories.Count)
             {
-                ServerGcHeapHistories[cswitch.ProcessorNumber].AddSwitchEvent(cswitch, PauseStartRelativeMSec, isBGCThread: isBGCThread);
+                ServerGcHeapHistories[cswitch.ProcessorNumber].AddSwitchEvent(cswitch, PauseStartRelativeMSec, threadKind: threadKind);
             }
         }
 
-        internal void AddServerGcSample(ThreadWorkSpan sample, bool isBGCThread)
+        internal void AddServerGcSample(ThreadWorkSpan sample, GCThreadKind? threadKind)
         {
             if (sample.ProcessorNumber >= 0 && sample.ProcessorNumber < ServerGcHeapHistories.Count)
             {
-                ServerGcHeapHistories[sample.ProcessorNumber].AddSampleEvent(sample, PauseStartRelativeMSec, isBGCThread: isBGCThread);
+                ServerGcHeapHistories[sample.ProcessorNumber].AddSampleEvent(sample, PauseStartRelativeMSec, threadKind: threadKind);
             }
         }
 
-        internal void AddGcJoin(GCJoinTraceData data, bool isEESuspended, bool isBGCThread)
+        internal void AddGcJoin(GCJoinTraceData data, bool isEESuspended, GCThreadKind threadKind)
         {
             bool isRestart = data.JoinType == GcJoinType.Restart;
             Debug.Assert(isRestart == (data.Heap == 100 || data.Heap == 200));
             if (data.Heap >= 0 && data.Heap < ServerGcHeapHistories.Count)
             {
-                ServerGcHeapHistories[data.Heap].AddJoin(data, PauseStartRelativeMSec, isEESuspended: isEESuspended, isBGCThread: isBGCThread);
+                ServerGcHeapHistories[data.Heap].AddJoin(data, PauseStartRelativeMSec, isEESuspended: isEESuspended, threadKind: threadKind);
             }
             else if (isRestart)
             {
                 // restart
                 foreach (var heap in ServerGcHeapHistories)
                 {
-                    heap.AddJoin(data, PauseStartRelativeMSec, isEESuspended: isEESuspended, isBGCThread: isBGCThread);
+                    heap.AddJoin(data, PauseStartRelativeMSec, isEESuspended: isEESuspended, threadKind: threadKind);
                 }
             }
             else
@@ -3264,6 +4357,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         public double DurationMsc;
         public int Priority = -1;
         public int WaitReason = -1;
+        public int OldThreadId;
 
         public ThreadWorkSpan(CSwitchTraceData switchData)
         {
@@ -3274,6 +4368,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             AbsoluteTimestampMsc = switchData.TimeStampRelativeMSec;
             Priority = switchData.NewThreadPriority;
             WaitReason = (int)switchData.OldThreadWaitReason;
+            OldThreadId = switchData.OldThreadID;
         }
 
         public ThreadWorkSpan(ThreadWorkSpan span)
@@ -3556,12 +4651,29 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         public double FreeListConsumed;
     }
 
+    // WARN: A background GC may still have foreground threads.
+    [Obsolete("This is experimental, you should not use it yet for non-experimental purposes.")]
+    public enum GCThreadKind
+    {
+        Foreground,
+        Background,
+    }
+
+    internal enum GcBackgroundKind
+    {
+        Foreground,
+        Background
+    }
+
     [Obsolete("This is experimental, you should not use it yet for non-experimental purposes.")]
     public class GcJoin
     {
         public int ThreadId;
         public bool IsEESuspended;
-        public bool IsBGCThread;
+        public GCThreadKind ThreadKind;
+        /// <summary>
+        /// WARN: *NOT* heap, actually this is the ProcessorNumber
+        /// </summary>
         public int Heap;
         public double RelativeTimestampMsc;
         public double AbsoluteTimestampMsc;
@@ -3591,7 +4703,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         #region private 
         //list of times in msc starting from GC start when GCJoin events were fired for this heap
 
-        internal void AddSampleEvent(ThreadWorkSpan sample, double pauseStartRelativeMSec, bool isBGCThread)
+        internal void AddSampleEvent(ThreadWorkSpan sample, double pauseStartRelativeMSec, GCThreadKind? threadKind)
         {
             GcWorkSpan lastSpan = SampleSpans.Count > 0 ? SampleSpans[SampleSpans.Count - 1] : null;
             if (lastSpan != null && lastSpan.ThreadId == sample.ThreadId && lastSpan.ProcessId == sample.ProcessId &&
@@ -3601,7 +4713,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
             else
             {
-                SampleSpans.Add(new GcWorkSpan(sample, isBGCThread)
+                SampleSpans.Add(new GcWorkSpan(sample, threadKind)
                 {
                     Type = GetSpanType(sample),
                     RelativeTimestampMsc = sample.AbsoluteTimestampMsc - pauseStartRelativeMSec,
@@ -3610,7 +4722,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
         }
 
-        internal void AddSwitchEvent(ThreadWorkSpan switchData, double pauseStartRelativeMSec, bool isBGCThread)
+        internal void AddSwitchEvent(ThreadWorkSpan switchData, double pauseStartRelativeMSec, GCThreadKind? threadKind)
         {
             GcWorkSpan lastSpan = SwitchSpans.Count > 0 ? SwitchSpans[SwitchSpans.Count - 1] : null;
             if (switchData.ThreadId == GcWorkingThreadId && switchData.ProcessId == ProcessId)
@@ -3628,7 +4740,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
                 lastSpan.WaitReason = switchData.WaitReason;
             }
 
-            SwitchSpans.Add(new GcWorkSpan(switchData, isBGCThread: isBGCThread)
+            SwitchSpans.Add(new GcWorkSpan(switchData, threadKind: threadKind)
             {
                 Type = GetSpanType(switchData),
                 RelativeTimestampMsc = switchData.AbsoluteTimestampMsc - pauseStartRelativeMSec,
@@ -3671,13 +4783,13 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         // we add them to every heap with the ProcessorNumber so we know which heap/processor it was 
         // fired on.
         // Also for these restart events, the id field is always -1.
-        internal void AddJoin(GCJoinTraceData data, double pauseStartRelativeMSec, bool isEESuspended, bool isBGCThread)
+        internal void AddJoin(GCJoinTraceData data, double pauseStartRelativeMSec, bool isEESuspended, GCThreadKind threadKind)
         {
             GcJoins.Add(new GcJoin
             {
                 ThreadId = data.ThreadID,
                 IsEESuspended = isEESuspended,
-                IsBGCThread = isBGCThread,
+                ThreadKind = threadKind,
                 Heap = data.ProcessorNumber,
                 AbsoluteTimestampMsc = data.TimeStampRelativeMSec,
                 RelativeTimestampMsc = data.TimeStampRelativeMSec - pauseStartRelativeMSec,
@@ -3703,12 +4815,12 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
     {
         public WorkSpanType Type;
         public double RelativeTimestampMsc;
-        public bool IsBGCThread;
+        public GCThreadKind? ThreadKind;
 
-        public GcWorkSpan(ThreadWorkSpan span, bool isBGCThread)
+        public GcWorkSpan(ThreadWorkSpan span, GCThreadKind? threadKind)
             : base(span)
         {
-            IsBGCThread = isBGCThread;
+            ThreadKind = threadKind;
         }
     }
 }
@@ -4504,6 +5616,22 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             bool res = backgroundGCThreads != null && backgroundGCThreads.ContainsKey(threadID);
             // Debug.Assert(res || serverGCThreads.ContainsKey(threadID)); // Fails because serverGCThreads is set in the second GC?
             return res;
+        }
+
+        internal GCThreadKind? GetThreadKind(int threadId)
+        {
+            if (serverGCThreads.ContainsKey(threadId))
+            {
+                return GCThreadKind.Foreground;
+            }
+            else if (backgroundGCThreads != null && backgroundGCThreads.ContainsKey(threadId))
+            {
+                return GCThreadKind.Background;
+            }
+            else
+            {
+                return null;
+            }
         }
 
         // I keep this for the purpose of server Background GC. Unfortunately for server background 
