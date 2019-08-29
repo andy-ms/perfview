@@ -1,4 +1,5 @@
 //     Copyright (c) Microsoft Corporation.  All rights reserved.
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using Address = System.UInt64;
@@ -11,7 +12,8 @@ namespace Microsoft.Diagnostics.Tracing.Utilities
     /// over time (eg Process IDs, thread IDs).  Thus it takes a handle AND A TIME, and finds the value
     /// associated with that handle at that time.   
     /// </summary>
-    internal class HistoryDictionary<T>
+    [Obsolete]
+    public class HistoryDictionary<T>
     {
         public HistoryDictionary(int initialSize)
         {

@@ -24,6 +24,28 @@ using Address = System.UInt64;
 // TODO I have low confidence in the TCP headers, especially for Versions < 2 (how much do we care?)
 namespace Microsoft.Diagnostics.Tracing.Parsers
 {
+    [Obsolete]
+    public interface IThreadIDToProcessID
+    {
+        int? ThreadIDToProcessID(int threadID, long timeQPC);
+    }
+
+    [Obsolete]
+    class ThreadIDToProcessIDImpl : IThreadIDToProcessID
+    {
+        KernelTraceEventParserState state;
+        public ThreadIDToProcessIDImpl(KernelTraceEventParserState state)
+        {
+            this.state = state;
+        }
+
+        public int? ThreadIDToProcessID(int threadID, long timeQPC)
+        {
+            int res = state.ThreadIDToProcessID(threadID, timeQPC);
+            return res == -1 ? (int?) null : res;
+        }
+    }
+
     /// <summary>
     /// The KernelTraceEventParser is a class that knows how to decode the 'standard' kernel events.
     /// It exposes an event for each event of interest that users can subscribe to.
@@ -247,6 +269,20 @@ namespace Microsoft.Diagnostics.Tracing.Parsers
         }
 
         public KernelTraceEventParser(TraceEventSource source) : this(source, DefaultOptionsForSource(source)) { }
+
+        // TODO: use a IReadOnlyHistoryDictionary interface
+        [Obsolete]
+        public HistoryDictionary<int> ThreadIDToProcessID =>
+            State.threadIDtoProcessID;
+
+
+        [Obsolete]
+        public IThreadIDToProcessID ThreadIDToProcessIDGetter =>
+            new ThreadIDToProcessIDImpl(State);
+
+        //[Obsolete]
+        //public HistoryDictionary<string> ProcessIDToProcessName =>
+        //    State.process
 
         public KernelTraceEventParser(TraceEventSource source, ParserTrackingOptions tracking)
             : base(source)
@@ -8064,7 +8100,7 @@ namespace Microsoft.Diagnostics.Tracing.Parsers.Kernel
         }
         protected internal override void Dispatch()
         {
-            Debug.Assert(!(Version == 2 && EventDataLength != HostOffset(52, 1)));
+            //Debug.Assert(!(Version == 2 && EventDataLength != HostOffset(52, 1)));
             Debug.Assert(!(Version > 2 && EventDataLength < HostOffset(52, 1)));
             Action(this);
         }
