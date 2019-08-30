@@ -17,18 +17,18 @@ using Microsoft.Diagnostics.Tracing.Parsers.Tpl;
 using Microsoft.Diagnostics.Tracing.Stacks;
 using Microsoft.Diagnostics.Utilities;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using Address = System.UInt64;
+using HeapID = System.Int32;
+using ThreadID = System.Int32;
+using ProcessID = System.Int32;
 
 namespace Microsoft.Diagnostics.Tracing.Analysis
 {
-    using ThreadID = Int32;
-
     /// <summary>
     /// Extension methods to enable TraceManagedProcess
     /// </summary>
@@ -400,10 +400,10 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     if (processRuntimes.TryGetValue(tmpProc, out mang))
                     {
                         mang.GC.m_stats.ThreadId2Priority[data.NewThreadID] = data.NewThreadPriority;
-                        int heapIndex = mang.GC.m_stats.IsServerGCThread(data.ThreadID);
-                        if ((heapIndex > -1) && !(mang.GC.m_stats.ServerGcHeap2ThreadId.ContainsKey(heapIndex)))
+                        HeapID? heapIndex = mang.GC.m_stats.IsServerGCThread(data.ThreadID);
+                        if ((heapIndex != null) && !(mang.GC.m_stats.ServerGcHeap2ThreadId.ContainsKey(heapIndex.Value)))
                         {
-                            mang.GC.m_stats.ServerGcHeap2ThreadId[heapIndex] = data.ThreadID;
+                            mang.GC.m_stats.ServerGcHeap2ThreadId[(int) heapIndex.Value] = data.ThreadID;
                         }
                     }
 
@@ -412,17 +412,16 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                         var proc = pair.Key;
                         mang = pair.Value;
 
-                        GCThreadKind? threadKind = mang.GC.m_stats.GetThreadKind(data.OldThreadID) ?? mang.GC.m_stats.GetThreadKind(data.NewThreadID);
-                        if (threadKind != null)
+                        foreach (GCHeapAndThreadKind heapAndThreadKind in mang.GC.m_stats.GetHeapAndThreadKinds(data.OldThreadID, data.NewThreadID))
                         {
-                            TraceGC _gc = TraceGarbageCollector.GetCurrentGC(mang, data.TimeStampRelativeMSec, threadKind: threadKind);
+                            TraceGC _gc = TraceGarbageCollector.GetCurrentGC(mang, data.TimeStampRelativeMSec, threadKind: heapAndThreadKind.ThreadKind);
                             // If we are in the middle of a GC.
                             if (_gc != null)
                             {
                                 // TODO: Why does bgc not get cswitch?
                                 if ((_gc.Type != GCType.BackgroundGC) && (mang.GC.m_stats.IsServerGCUsed == 1))
                                 {
-                                    _gc.AddServerGcThreadSwitch(new ThreadWorkSpan(data), threadKind: threadKind);
+                                    _gc.AddServerGcThreadSwitch(new ThreadWorkSpan(data), heapAndThreadKind: heapAndThreadKind);
                                 }
                             }
                         }
@@ -448,7 +447,10 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                             {
                                 if ((e.Type != GCType.BackgroundGC) && (tmpMang.GC.m_stats.IsServerGCUsed == 1))
                                 {
-                                    e.AddServerGcSample(new ThreadWorkSpan(data), threadKind: tmpMang.GC.m_stats.GetThreadKind(data.ThreadID));
+                                    foreach (GCHeapAndThreadKind htk in tmpMang.GC.m_stats.GetHeapAndThreadKinds(data.ThreadID))
+                                    {
+                                        e.AddServerGcSample(new ThreadWorkSpan(data), heapAndThreadKind: htk);
+                                    }
                                     loadedRuntime = tmpMang;
                                     gcProcess = proc;
                                 }
@@ -473,11 +475,11 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     TraceLoadedDotNetRuntime mang;
                     if (processRuntimes.TryGetValue(tmpProc, out mang))
                     {
-                        int heapIndex = mang.GC.m_stats.IsServerGCThread(data.ThreadID);
+                        HeapID? heapIndex = mang.GC.m_stats.IsServerGCThread(data.ThreadID);
 
-                        if ((heapIndex > -1) && !(mang.GC.m_stats.ServerGcHeap2ThreadId.ContainsKey(heapIndex)))
+                        if ((heapIndex != null) && !(mang.GC.m_stats.ServerGcHeap2ThreadId.ContainsKey(heapIndex.Value)))
                         {
-                            mang.GC.m_stats.ServerGcHeap2ThreadId[heapIndex] = data.ThreadID;
+                            mang.GC.m_stats.ServerGcHeap2ThreadId[heapIndex.Value] = data.ThreadID;
                         }
 
                         var cpuIncrement = tmpProc.SampleIntervalMSec();
@@ -489,9 +491,9 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                             bool isThreadDoingGC = false;
                             if ((_gc.Type != GCType.BackgroundGC) && (mang.GC.m_stats.IsServerGCUsed == 1))
                             {
-                                if (heapIndex != -1)
+                                if (heapIndex != null)
                                 {
-                                    _gc.AddServerGCThreadTime(heapIndex, cpuIncrement);
+                                    _gc.AddServerGCThreadTime(heapIndex.Value, cpuIncrement);
                                     isThreadDoingGC = true;
                                 }
                             }
@@ -601,15 +603,24 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     if (!isKnownToBeBackground && mang.GC.m_stats.IsServerGCUsed != 0)
                     {
                         mang.GC.m_stats.SetUpServerGcHistory(process.ProcessID, gc);
-                        GCThreadKind? threadKind(ThreadWorkSpan s) => mang.GC.m_stats.GetThreadKind(s.ThreadId);
+
+                        IEnumerable<GCHeapAndThreadKind> threadKinds(ThreadWorkSpan s) =>
+                            mang.GC.m_stats.GetHeapAndThreadKinds(s.OldThreadId, s.ThreadId);
+
                         foreach (var s in RecentCpuSamples)
                         {
-                            gc.AddServerGcSample(s, threadKind: threadKind(s));
+                            foreach (GCHeapAndThreadKind htk in threadKinds(s))
+                            {
+                                gc.AddServerGcSample(s, heapAndThreadKind: htk);
+                            }
                         }
 
                         foreach (var s in RecentThreadSwitches)
                         {
-                            gc.AddServerGcThreadSwitch(s, threadKind: threadKind(s));
+                            foreach (GCHeapAndThreadKind htk in threadKinds(s))
+                            {
+                                gc.AddServerGcThreadSwitch(s, heapAndThreadKind: htk);
+                            }
                         }
                     }
 
@@ -2027,9 +2038,18 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 PrevJoin = prevJoin;
                 CurJoin = curJoin;
 
-                if (prev2Join != null)
+                if (Prev2Join != null)
                 {
-                    Debug.Assert(prevJoin != null);
+                    Debug.Assert(PrevJoin != null);
+                }
+
+                // TODO: delete (valid assertion, but too specific)
+                if (CurJoin.Stage == GCJoinStage.done)
+                {
+                    if (PrevJoin == null)
+                    {
+                        throw new Exception("'done' should not be the first stage!");
+                    }
                 }
 
                 // Stages may repeat, but not this close together
@@ -2550,7 +2570,12 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     // Possible that bgc is not set yet if this is the beginning of the trace and we missed the GC/Start event.
                     return bgc ?? last;
                 case null:
-                    return last.IsComplete ? bgc ?? last : last;
+                    // TODO: `!last.SeenStartEvent && joinStage == GCJoinStage.done` seems hacky.
+                    // Added because it's possible that bgc is still finishing up but the next GC's SuspendEEStart event has already happened.
+                    // Obviously we should not add a 'done' event to a GC that hasn't had a GCStart yet.
+                    return last.IsComplete || (!last.SeenStartEvent && joinStage == GCJoinStage.done)
+                        ? bgc ?? last
+                        : last;
                 default:
                     throw new Exception();
             }
@@ -2588,7 +2613,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 else
                 {
                     // There can't be two background gcs. So only way there are two different gcs with the same state is if this is in the foreground.
-                    Debug.Assert(threadKind == GCThreadKind.Foreground);
+                    if (threadKind != GCThreadKind.Foreground) throw new Exception("Must be foreground");
 
                     // Go with the *current* state.
                     bool lastHasCurrent = oldLastState.Value.HasJoinStageCur(joinStage);
@@ -4124,7 +4149,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
         }
 
-        private void CheckThreadKind(GCThreadKind? threadKind)
+        private void CheckThreadKind(GCThreadKind threadKind)
         {
             if (SeenStartEvent && Type != GCType.BackgroundGC && threadKind == GCThreadKind.Background)
             {
@@ -4132,38 +4157,34 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
         }
 
-        internal void AddServerGcThreadSwitch(ThreadWorkSpan cswitch, GCThreadKind? threadKind)
+        internal void AddServerGcThreadSwitch(ThreadWorkSpan cswitch, GCHeapAndThreadKind heapAndThreadKind)
         {
-            CheckThreadKind(threadKind);
-            if (cswitch.ProcessorNumber >= 0 && cswitch.ProcessorNumber < ServerGcHeapHistories.Count)
-            {
-                ServerGcHeapHistories[cswitch.ProcessorNumber].AddSwitchEvent(cswitch, PauseStartRelativeMSec, threadKind: threadKind);
-            }
+            CheckThreadKind(heapAndThreadKind.ThreadKind);
+            ServerGcHeapHistories[(int) heapAndThreadKind.HeapID].AddSwitchEvent(cswitch, PauseStartRelativeMSec, threadKind: heapAndThreadKind.ThreadKind);
         }
 
-        internal void AddServerGcSample(ThreadWorkSpan sample, GCThreadKind? threadKind)
+        internal void AddServerGcSample(ThreadWorkSpan sample, GCHeapAndThreadKind heapAndThreadKind)
         {
-            CheckThreadKind(threadKind);
-            if (sample.ProcessorNumber >= 0 && sample.ProcessorNumber < ServerGcHeapHistories.Count)
-            {
-                ServerGcHeapHistories[sample.ProcessorNumber].AddSampleEvent(sample, PauseStartRelativeMSec, threadKind: threadKind);
-            }
+            CheckThreadKind(heapAndThreadKind.ThreadKind);
+            ServerGcHeapHistories[(int) heapAndThreadKind.HeapID].AddSampleEvent(sample, PauseStartRelativeMSec, threadKind: heapAndThreadKind.ThreadKind);
         }
 
         internal void AddGcJoin(GCJoinTraceData data, bool isEESuspended, GCThreadKind threadKind)
         {
+            GCHeapAndThreadKind heapAndThreadKind = new GCHeapAndThreadKind(data.Heap, threadKind);
+
             bool isRestart = data.JoinType == GcJoinType.Restart;
             Debug.Assert(isRestart == (data.Heap == 100 || data.Heap == 200));
             if (data.Heap >= 0 && data.Heap < ServerGcHeapHistories.Count)
             {
-                ServerGcHeapHistories[data.Heap].AddJoin(data, PauseStartRelativeMSec, isEESuspended: isEESuspended, threadKind: threadKind);
+                ServerGcHeapHistories[data.Heap].AddJoin(data, PauseStartRelativeMSec, isEESuspended: isEESuspended, heapAndThreadKind: heapAndThreadKind);
             }
             else if (isRestart)
             {
                 // restart
                 foreach (var heap in ServerGcHeapHistories)
                 {
-                    heap.AddJoin(data, PauseStartRelativeMSec, isEESuspended: isEESuspended, threadKind: threadKind);
+                    heap.AddJoin(data, PauseStartRelativeMSec, isEESuspended: isEESuspended, heapAndThreadKind: heapAndThreadKind);
                 }
             }
             else
@@ -4424,15 +4445,15 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
     [Obsolete("This is experimental, you should not use it yet for non-experimental purposes.")]
     public class ThreadWorkSpan
     {
-        public int ThreadId;
-        public int ProcessId;
-        public string ProcessName;
-        public int ProcessorNumber;
-        public double AbsoluteTimestampMsc;
+        public readonly ThreadID ThreadId;
+        public readonly ProcessID ProcessId;
+        public readonly string ProcessName;
+        public readonly int ProcessorNumber;
+        public readonly double AbsoluteTimestampMsc;
         public double DurationMsc;
         public int Priority = -1;
         public int WaitReason = -1;
-        public int OldThreadId;
+        public readonly ThreadID? OldThreadId;
 
         public ThreadWorkSpan(CSwitchTraceData switchData)
         {
@@ -4456,6 +4477,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             DurationMsc = span.DurationMsc;
             Priority = span.Priority;
             WaitReason = span.WaitReason;
+            OldThreadId = span.OldThreadId;
         }
 
         public ThreadWorkSpan(SampledProfileTraceData sample)
@@ -4467,6 +4489,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             AbsoluteTimestampMsc = sample.TimeStampRelativeMSec;
             DurationMsc = 1;
             Priority = 0;
+            OldThreadId = null;
         }
     }
     /// <summary>
@@ -4734,6 +4757,21 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         Background,
     }
 
+    [Obsolete("This is experimental, you should not use it yet for non-experimental purposes.")]
+    public readonly struct GCHeapAndThreadKind
+    {
+        public readonly HeapID HeapID;
+        public readonly GCThreadKind ThreadKind;
+
+        public GCHeapAndThreadKind(
+            HeapID heapID,
+            GCThreadKind threadKind)
+        {
+            HeapID = heapID;
+            ThreadKind = threadKind;
+        }
+    }
+
     internal enum GcBackgroundKind
     {
         Foreground,
@@ -4745,16 +4783,16 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
     {
         public int ThreadId;
         public bool IsEESuspended;
-        public GCThreadKind ThreadKind;
-        /// <summary>
-        /// WARN: *NOT* heap, actually this is the ProcessorNumber
-        /// </summary>
-        public int Heap;
+        public GCHeapAndThreadKind HeapAndThreadKind;
+        public int ProcessorNumber;
         public double RelativeTimestampMsc;
         public double AbsoluteTimestampMsc;
         public GcJoinType Type;
         public GcJoinTime Time;
         public int JoinID;
+
+        public HeapID Heap => HeapAndThreadKind.HeapID;
+        public GCThreadKind ThreadKind => HeapAndThreadKind.ThreadKind;
 
         [Obsolete]
         public GCJoinStage JoinStage =>
@@ -4771,10 +4809,11 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
     [Obsolete("This is experimental, you should not use it yet for non-experimental purposes.")]
     public class ServerGcHistory
     {
-        public int HeapId;
+        public HeapID HeapId;
         public int ProcessId;
-        public int GcWorkingThreadId;
-        public int GcWorkingThreadPriority;
+        public ThreadID? GcWorkingThreadId;
+        public ThreadID? GcBackgroundThreadId;
+        public int? GcWorkingThreadPriority;
         public List<GcWorkSpan> SwitchSpans = new List<GcWorkSpan>();
         public List<GcWorkSpan> SampleSpans = new List<GcWorkSpan>();
         public List<GcJoin> GcJoins = new List<GcJoin>();
@@ -4809,6 +4848,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
                 //update gc thread priority since we have new data
                 GcWorkingThreadPriority = switchData.Priority;
             }
+            //TODO: also use oldthreadid and oldthreadpriority?
 
             if (lastSpan != null)
             {
@@ -4862,14 +4902,14 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         // we add them to every heap with the ProcessorNumber so we know which heap/processor it was 
         // fired on.
         // Also for these restart events, the id field is always -1.
-        internal void AddJoin(GCJoinTraceData data, double pauseStartRelativeMSec, bool isEESuspended, GCThreadKind threadKind)
+        internal void AddJoin(GCJoinTraceData data, double pauseStartRelativeMSec, bool isEESuspended, GCHeapAndThreadKind heapAndThreadKind)
         {
             GcJoins.Add(new GcJoin
             {
                 ThreadId = data.ThreadID,
                 IsEESuspended = isEESuspended,
-                ThreadKind = threadKind,
-                Heap = data.ProcessorNumber,
+                HeapAndThreadKind = heapAndThreadKind,
+                ProcessorNumber = data.ProcessorNumber,
                 AbsoluteTimestampMsc = data.TimeStampRelativeMSec,
                 RelativeTimestampMsc = data.TimeStampRelativeMSec - pauseStartRelativeMSec,
                 Type = data.JoinType,
@@ -5576,7 +5616,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
         }
 
-        internal void AddServerGCThreadFromMark(int ThreadID, int HeapNum)
+        internal void AddServerGCThreadFromMark(ThreadID ThreadID, HeapID HeapNum)
         {
             if (IsServerGCUsed == 1)
             {
@@ -5607,7 +5647,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
 
                 if (proc.GC.m_stats.IsServerGCUsed == 1)
                 {
-                    proc.GC.m_stats.serverGCThreads = new Dictionary<int, int>(data.NumHeaps);
+                    proc.GC.m_stats.serverGCThreads = new Dictionary<ThreadID, HeapID>(data.NumHeaps);
                 }
             }
 
@@ -5669,8 +5709,8 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         }
 
 
-        internal Dictionary<int, int> ThreadId2Priority = new Dictionary<int, int>();
-        internal Dictionary<int, int> ServerGcHeap2ThreadId = new Dictionary<int, int>();
+        internal Dictionary<ThreadID, int> ThreadId2Priority = new Dictionary<int, int>();
+        internal Dictionary<HeapID, ThreadID> ServerGcHeap2ThreadId = new Dictionary<HeapID, ThreadID>();
 
 
         // EE can be suspended via different reasons. The only ones we care about are
@@ -5713,43 +5753,72 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
         }
 
+        private GCHeapAndThreadKind? TryGetHeapAndThreadKind(ThreadID threadID)
+        {
+            if (serverGCThreads.TryGetValue(threadID, out HeapID heapIDFG))
+            {
+                return new GCHeapAndThreadKind(heapIDFG, GCThreadKind.Foreground);
+            }
+            // Can't do anything for background threads, we don't have heap numbers for them
+            //else if (backgroundGCThreads != null && backgroundGCThreads.TryGetValue(threadID, out HeapID heapIDBG))
+            //{
+            //    return new GCHeapAndThreadKind(heapIDBG, GCThreadKind.Background);
+            //}
+            else
+            {
+                return null;
+            }
+        }
+
+
+        internal IEnumerable<GCHeapAndThreadKind> GetHeapAndThreadKinds(ThreadID threadID)
+        {
+            GCHeapAndThreadKind? heapAndThreadKind = TryGetHeapAndThreadKind(threadID);
+            if (heapAndThreadKind != null)
+            {
+                yield return heapAndThreadKind.Value;
+            }
+        }
+
+        internal IEnumerable<GCHeapAndThreadKind> GetHeapAndThreadKinds(ThreadID? oldThreadID, ThreadID newThreadID) =>
+            Enumerable.Concat<GCHeapAndThreadKind>(
+                oldThreadID == null ? Enumerable.Empty<GCHeapAndThreadKind>() : GetHeapAndThreadKinds(oldThreadID.Value),
+                GetHeapAndThreadKinds(newThreadID));
+
         // I keep this for the purpose of server Background GC. Unfortunately for server background 
         // GC we are firing the GCEnd/GCHeaps events and Global/Perheap events in the reversed order.
         // This is so that the Global/Perheap events can still be attributed to the right BGC.
         internal TraceGC lastCompletedGC = null;
 
-
         internal bool gotThreadInfo = false;
         // This is the server GC threads. It's built up in the 2nd server GC we see. 
-        internal Dictionary<int, int> serverGCThreads = new Dictionary<int, int>();
+        internal Dictionary<ThreadID, HeapID> serverGCThreads = new Dictionary<ThreadID, HeapID>();
 
 
-        internal int IsServerGCThread(int threadID)
+        internal HeapID? IsServerGCThread(int threadID)
         {
-            int heapIndex;
             if (serverGCThreads != null)
             {
-                if (serverGCThreads.TryGetValue(threadID, out heapIndex))
+                if (serverGCThreads.TryGetValue(threadID, out HeapID heapIndex))
                 {
                     return heapIndex;
                 }
             }
-            return -1;
+            return null;
         }
 
         internal void SetUpServerGcHistory(int id, TraceGC gc)
         {
-            for (int i = 0; i < HeapCount; i++)
+            for (HeapID i = 0; i < HeapCount; i++)
             {
-                int gcThreadId = 0;
-                int gcThreadPriority = 0;
-                ServerGcHeap2ThreadId.TryGetValue(i, out gcThreadId);
-                ThreadId2Priority.TryGetValue(gcThreadId, out gcThreadPriority);
+                int? gcThreadId = ServerGcHeap2ThreadId.TryGetValue(i, out int tid) ? tid : (int?) null;
+                int? gcThreadPriority = gcThreadId != null && ThreadId2Priority.TryGetValue(gcThreadId.Value, out int pri) ? pri : (int?) null;
                 gc.ServerGcHeapHistories.Add(new ServerGcHistory
                 {
                     ProcessId = id,
                     HeapId = i,
                     GcWorkingThreadId = gcThreadId,
+                    GcBackgroundThreadId = null, // TODO -- similar to above
                     GcWorkingThreadPriority = gcThreadPriority
                 });
             }

@@ -3397,6 +3397,7 @@ namespace Microsoft.Diagnostics.Tracing
 
         private void DoDispatch(TraceEvent anEvent)
         {
+            Debug.Assert(anEvent != null, "Can't dispatch null event");
 #if DEBUG
             try
             {
