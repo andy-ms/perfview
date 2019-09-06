@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using Address = System.UInt64;
 
 namespace Microsoft.Diagnostics.Tracing.Utilities
@@ -152,6 +153,9 @@ namespace Microsoft.Diagnostics.Tracing.Utilities
 #endif
             }
         }
+        public IEnumerable<ulong> Keys =>
+            (from e in Entries select e.Key);
+
         public int Count { get { return count; } }
         /// <summary>
         /// Remove all entries associated with a given key (over all time).  
@@ -195,7 +199,8 @@ namespace Microsoft.Diagnostics.Tracing.Utilities
             internal Address key;
             internal long startTime;
             internal T value;
-            internal HistoryValue next;
+            //TODO:INTERNAL
+            public HistoryValue next;
             // To improve getting to the end quickly, we allow nodes to store values that 'skip ahead'.
             // Today we only use this field for the first node to skip to the end (for fast append) 
             // The only strong invarient for this field is that it point further up the same list.  

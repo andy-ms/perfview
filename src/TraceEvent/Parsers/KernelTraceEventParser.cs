@@ -7,10 +7,13 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using Utilities;
 using Address = System.UInt64;
+using ProcessID = System.Int32;
+using ThreadID = System.Int32;
 
 /* This file was generated with the command */
 // traceParserGen /needsState /merge /renameFile KernelTraceEventParser.renames /mof KernelTraceEventParser.mof KernelTraceEventParser.cs
@@ -27,7 +30,21 @@ namespace Microsoft.Diagnostics.Tracing.Parsers
     [Obsolete]
     public interface IThreadIDToProcessID
     {
-        int? ThreadIDToProcessID(int threadID, long timeQPC);
+        ProcessID? ThreadIDToProcessID(ThreadID threadID, long timeQPC);
+        IEnumerable<ThreadIDAndTime> ProcessIDToThreadIDsAndTimes(ProcessID processID);
+    }
+
+    [Obsolete]
+    public struct ThreadIDAndTime
+    {
+        public readonly ThreadID ThreadID;
+        public readonly long TimeQPC;
+
+        public ThreadIDAndTime(ThreadID threadID, long timeQPC)
+        {
+            ThreadID = threadID;
+            TimeQPC = timeQPC;
+        }
     }
 
     [Obsolete]
@@ -39,10 +56,23 @@ namespace Microsoft.Diagnostics.Tracing.Parsers
             this.state = state;
         }
 
-        public int? ThreadIDToProcessID(int threadID, long timeQPC)
+        public ProcessID? ThreadIDToProcessID(ThreadID threadID, long timeQPC)
         {
-            int res = state.ThreadIDToProcessID(threadID, timeQPC);
-            return res == -1 ? (int?) null : res;
+            ProcessID res = state.ThreadIDToProcessID(threadID, timeQPC);
+            return res == -1 ? (ProcessID?) null : res;
+        }
+
+        public IEnumerable<ThreadIDAndTime> ProcessIDToThreadIDsAndTimes(ProcessID processID)
+        {
+            return from entry in state.threadIDtoProcessID.Entries where entry.Value == processID select new ThreadIDAndTime((ThreadID) entry.Key, entry.StartTime);
+            /*foreach (HistoryDictionary<ThreadID>.HistoryValue entry in state.threadIDtoProcessID.Entries)
+            {
+                if (entry.Value == processID)
+                {
+                    yield return new ThreadIDAndTime((ThreadID) entry.Key, entry.StartTime);
+                }
+            }*/
+            //    from key in state.threadIDtoProcessID.Keys select (ThreadID)key;
         }
     }
 
