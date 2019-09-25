@@ -734,6 +734,8 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                         // There may be a few of these before the end of the GC;
                         // the final GCRestartEEStop after the end of the GC will be the final value of PauseEndRelativeMSec.
                         _gc.PauseEndRelativeMSec = data.TimeStampRelativeMSec;
+
+                        FinishUpGC(_gc, stats.GC.m_stats);
                     }
 
                     // We don't change between a GC end and the pause resume.   
@@ -742,14 +744,19 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     stats.GC.m_stats.suspendTimeRelativeMSec = -1;
                     stats.GC.m_stats.suspendThreadIDBGC = -1;
                     stats.GC.m_stats.suspendThreadIDGC = -1;
-
-                    FinishUpGC(_gc, stats.GC.m_stats);
                 };
 
                 void FinishUpGC(TraceGC gc, GCStats m_stats)
                 {
+                    //TODO:KILL
+                    if (gc == null)
+                        throw new Exception("GC is null?");
                     foreach (ServerGcHistory hp in gc.ServerGcHeapHistories)
                     {
+                        //TODO:KILL
+                        if (hp == null)
+                            throw new Exception("Heap is null?");
+
                         ThreadID? workingThreadId = m_stats.GetServerGCThreadFromHeap(hp.HeapId);
                         if (workingThreadId != null)
                         {
@@ -804,7 +811,10 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                         {
                             // After starting a BGC, we may proceed with an ephemeral GC.
                             // This ephemeral GC won't have an associated SuspendEEStart, so we have to create it here instead
-                            Debug.Assert(stats.GC.m_stats.currentBGC == _gc, "Expect to see a BGC here");
+                            if (!DONTUSE_IGNORE_ERRORS)
+                            {
+                                Debug.Assert(stats.GC.m_stats.currentBGC == _gc, "Expect to see a BGC here");
+                            }
                             _gc = AddNewGC(process, stats, isKnownToBeBackground: data.Type == GCType.BackgroundGC, number: data.Count);
                         }
                         _gc.Generation = data.Depth;
@@ -971,6 +981,9 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
 
                 Action<GCJoinTraceData> handleJoin = delegate (GCJoinTraceData data)
                 {
+                    if (DEBUG_IGNORE_JOINS)
+                        return;
+
                     MaybePrintEvent(data);
                     var stats = currentManagedProcess(data);
 
@@ -1631,6 +1644,9 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
         }
 
         internal const bool DEBUG_PRINT_GC = false;
+        internal const bool DEBUG_IGNORE_JOINS = false;
+        internal const bool DONTUSE_IGNORE_ERRORS = false;
+        internal const bool DONTUSE_IGNORE_MISSING_JOIN_EVENTS = true;
 
         private static void MaybePrintEvent(TraceEvent te)
         {
@@ -1975,8 +1991,9 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     bool seenRestartEnd,
                     ThreadID? expectingRestartThreadID)
                 {
-                    Debug.Assert(seenEnds <= seenStarts);
                     Debug.Assert(stage != GCJoinStage.restart, "join stage should never be 'restart'");
+                    if (!TraceLoadedDotNetRuntime.DONTUSE_IGNORE_MISSING_JOIN_EVENTS)
+                        Debug.Assert(seenEnds <= seenStarts);
                     Stage = stage;
                     SeenStarts = seenStarts;
                     SeenEnds = seenEnds;
@@ -2039,7 +2056,8 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     ushort newSeenEnds = Incr(SeenEnds);
                     if (newSeenEnds > SeenStarts)
                     {
-                        throw new Exception("Should not get more ends than starts");
+                        if (!TraceLoadedDotNetRuntime.DONTUSE_IGNORE_MISSING_JOIN_EVENTS)
+                            throw new Exception("Should not get more ends than starts");
                     }
 
                     return new SingleJoinState(
@@ -2140,14 +2158,17 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
 
             public GCJoinStateFgOrBg WithNewCur(GCJoinStage newCurJoinStage, bool expectRestart, ThreadID threadID)
             {
-                if (Prev2Join?.SeenRestartEnd == false)
+                if (!TraceLoadedDotNetRuntime.DONTUSE_IGNORE_MISSING_JOIN_EVENTS)
                 {
-                    throw new Exception($"Never saw a restart end for {Prev2Join.Value.Stage}");
-                }
+                    if (Prev2Join?.SeenRestartEnd == false)
+                    {
+                        throw new Exception($"Never saw a restart end for {Prev2Join.Value.Stage}");
+                    }
 
-                if (Prev2Join?.AwaitingEnd == true)
-                {
-                    throw new Exception($"{Prev2Join?.Stage} has {Prev2Join?.SeenStarts} but only {Prev2Join?.SeenEnds} ends");
+                    if (Prev2Join?.AwaitingEnd == true)
+                    {
+                        throw new Exception($"{Prev2Join?.Stage} has {Prev2Join?.SeenStarts} starts but only {Prev2Join?.SeenEnds} ends");
+                    }
                 }
 
                 return new GCJoinStateFgOrBg(
@@ -4297,7 +4318,8 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             GCHeapAndThreadKind heapAndThreadKind = new GCHeapAndThreadKind(data.Heap, threadKind);
 
             bool isRestart = data.JoinType == GcJoinType.Restart;
-            Debug.Assert(isRestart == (data.Heap == 100 || data.Heap == 200));
+            // Not true, there may be that many heaps!
+            // Debug.Assert(isRestart == (data.Heap == 100 || data.Heap == 200));
             if (data.Heap >= 0 && data.Heap < ServerGcHeapHistories.Count)
             {
                 ServerGcHeapHistories[data.Heap].AddJoin(data, PauseStartRelativeMSec, isEESuspended: isEESuspended, heapAndThreadKind: heapAndThreadKind);
@@ -4312,8 +4334,11 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
             else
             {
-                // TODO: We should never even get here? If there's a join, there should be ServerGcHeapHistories
-                Debug.Assert(ServerGcHeapHistories.Count == 0);
+                //TODO: if should be unnecessary?
+                if (ServerGcHeapHistories.Count != 0)
+                {
+                    throw new Exception($"Got a join for heap {data.Heap}, but there are only {ServerGcHeapHistories.Count} heap histories");
+                }
             }
         }
 

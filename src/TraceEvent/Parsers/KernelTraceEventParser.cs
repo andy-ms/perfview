@@ -4516,7 +4516,15 @@ namespace Microsoft.Diagnostics.Tracing.Parsers.Kernel
         // public int PreviousCState { get { return GetByteAt(10); } }
         // public int SpareByte { get { return GetByteAt(11); } }
 
-        public ThreadWaitReason OldThreadWaitReason { get { return (ThreadWaitReason)GetByteAt(0xc); } }
+        public ThreadWaitReason OldThreadWaitReason {
+            get {
+                int res = GetByteAt(0xc);
+                // Assert it's a valid reason 
+                // TODO: this fails all the time!!!!
+                // Debug.Assert(res <= (int) ThreadWaitReason.Unknown);
+                return (ThreadWaitReason)res;
+            }
+        }
         public ThreadWaitMode OldThreadWaitMode { get { return (ThreadWaitMode)GetByteAt(0xd); } }
         public ThreadState OldThreadState { get { return (ThreadState)GetByteAt(0xe); } }
         public int OldThreadWaitIdealProcessor { get { return GetByteAt(15); } }

@@ -76,6 +76,8 @@ namespace Microsoft.Diagnostics.Tracing.EventPipe
                 {
                     // When a thread id is recycled the sequenceNumber can abruptly reset to 1 which
                     // makes droppedEvents go negative
+                    if (!(droppedEvents == 0 || sequenceNumber == 1))
+                        throw new Exception($"droppedEvents: {droppedEvents}, sequenceNumber: {sequenceNumber}");
                     Debug.Assert(droppedEvents == 0 || sequenceNumber == 1);
                 }
                 thread.SequenceNumber = sequenceNumber;
