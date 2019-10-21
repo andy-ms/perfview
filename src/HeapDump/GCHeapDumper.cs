@@ -25,9 +25,7 @@ using System.Threading;
 using Address = System.UInt64;
 using Microsoft.Diagnostics.Utilities;
 using Microsoft.Diagnostics.HeapDump;
-#if CROSS_GENERATION_LIVENESS
 using Microsoft.Diagnostics.CrossGenerationLiveness;
-#endif
 using System.Linq;
 
 /// <summary>
@@ -84,7 +82,6 @@ public class GCHeapDumper
         }
         else
         {
-#if CROSS_GENERATION_LIVENESS
             CrossGenerationLivenessCollector collector = new CrossGenerationLivenessCollector(
                 processID,
                 GenerationToTrigger,
@@ -96,10 +93,6 @@ public class GCHeapDumper
 
             collector.AttachAndExecute();
             collectionMetadata = collector.CollectionMetadata;
-#else
-            throw new Exception("Cross generation collection is only supported in heap dump EXE.");
-#endif
-
         }
 
         return collectionMetadata;

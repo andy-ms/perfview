@@ -35,6 +35,7 @@
 
   <ItemGroup>
     <Compile Include="..\HeapDump\*.cs" />
+    <Compile Include="..\HeapDump\CrossGenerationLiveness\**\*.cs" />
     <Compile Include="..\HeapDump\Utilities\*.cs" />
     <Compile Include="..\HeapDump\Debugger\**\*.cs" />
     <Compile Include="..\HeapDumpCommon\DotNetHeapInfo.cs" />

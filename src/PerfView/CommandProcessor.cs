@@ -1937,7 +1937,6 @@ namespace PerfView
             }
         }
 
-#if CROSS_GENERATION_LIVENESS
         public void CollectCrossGenerationLiveness(CommandLineArgs parsedArgs)
         {
             // Validate the input file name.
@@ -1955,7 +1954,6 @@ namespace PerfView
                 LogFile);
 
         }
-#endif
 
         #region private
         private void DisableNetMonTrace()

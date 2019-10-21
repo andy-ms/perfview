@@ -72,13 +72,11 @@ namespace PerfView
         public int MaxDumpCountK = 250;     // Maximum size of the File to generate.   We sample aggressively enough to try to hit this count of objects in the file
         public int MaxNodeCountK;           // Maximum size to even look at in the heap 
 
-#if CROSS_GENERATION_LIVENESS
         // Cross generation liveness options
         public int CGL_PID;
         public int CGL_Generation;
         public ulong CGL_PromotedBytesThreshold;
         public string CGL_PathToOutputFile;
-#endif
 
         // view options
         public string Process;              // A process name to focus on.
@@ -625,14 +623,12 @@ namespace PerfView
                 "Creates a VS project for creates a perfView extension.");
             parser.DefineOptionalParameter("ExtensionName", ref ExtensionName, "The name of the extension (no .DLL)");
 
-#if CROSS_GENERATION_LIVENESS
             parser.DefineParameterSet("CollectCrossGenerationLiveness", ref DoCommand, App.CommandProcessor.CollectCrossGenerationLiveness,
                 "Collect a heap snapshot that can be used to do cross-generation liveness analysis.");
             parser.DefineQualifier("PID", ref CGL_PID, "The process ID of the process to snapshot.");
             parser.DefineQualifier("Generation", ref CGL_Generation, "The generation of the GC to collect.");
             parser.DefineQualifier("PromotedBytesThreshold", ref CGL_PromotedBytesThreshold, "The threshold of promoted bytes after which a snapshot of the heap should be collected.");
             parser.DefineQualifier("OutputFile", ref CGL_PathToOutputFile, "The full path including filename where the resulting gcdump file should be stored.");
-#endif
 
             parser.DefineDefaultParameterSet(ref DoCommand, App.CommandProcessor.View, "View profile data.");
             parser.DefineOptionalParameter("DataFile", ref DataFile, "ETL or ETLX file containing profile data.");

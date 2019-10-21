@@ -1,5 +1,4 @@
-﻿#if CROSS_GENERATION_LIVENESS
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -46,4 +45,3 @@ namespace Microsoft.Diagnostics.CrossGenerationLiveness
         }
     }
 }
-#endif

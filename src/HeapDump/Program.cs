@@ -5,9 +5,7 @@ using System.Runtime.InteropServices;
 using System.Security;
 using System.Threading;
 using Triggers;
-#if CROSS_GENERATION_LIVENESS
 using Microsoft.Diagnostics.CrossGenerationLiveness;
-#endif
 
 internal class Program
 {
