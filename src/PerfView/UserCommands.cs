@@ -1299,7 +1299,7 @@ namespace PerfViewExtensibility
         //    }
         //}
 
-//#if CROSS_GENERATION_LIVENESS
+#if CROSS_GENERATION_LIVENESS
         public void CollectCrossGenerationLiveness(string processId, string generationToTrigger, string promotedBytes, string dumpFilePath)
         {
             // Convert the process id.
@@ -1320,7 +1320,7 @@ namespace PerfViewExtensibility
 
             HeapDumper.DumpGCHeapForCrossGenerationLiveness(pid, gen, promotedBytesThreshold, dumpFilePath, LogFile);
         }
-//#endif
+#endif
 
         /// <summary>
         /// Gets the ETW keywords (bitset definitions of what can be turned on in the provider) for a given provider. 

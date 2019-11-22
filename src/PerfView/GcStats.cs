@@ -1216,8 +1216,7 @@ namespace Stats
                         int x = scale * (int)join.RelativeTimestampMsc;
                         string color = "rgb(255,215,0)";
                         writer.WriteLine(string.Format("<polygon points='{0},5 {0},25 {1},15'  style='fill:{2};' >", x, x + 3, color));
-                        writer.WriteLine(string.Format("<title>GC Join Restart. Timestamp:{0:0.00} Type: {1} Called from heap #:{2} (Waking up other threads)</title>",
-                            join.AbsoluteTimestampMsc, join.Type, join.Heap));
+                        writer.WriteLine(string.Format("<title>GC Join Restart. Timestamp:{0:0.00} Type: {1} Called from heap #:{2} (Waking up other threads)</title>", join.AbsoluteTimestampMsc, join.Type, join.Heap));
                         writer.WriteLine("</polygon>");
                     }
                 }
