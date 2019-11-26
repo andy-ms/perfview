@@ -900,6 +900,7 @@ namespace Microsoft.Diagnostics.Tracing
         // Used to give TraceLogging events Event IDs. 
         private TraceLoggingEventId traceLoggingEventId;
 
+        [Obsolete]
         public override string ProcessName(int processID, long time100ns)
         {
             string ret;

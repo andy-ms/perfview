@@ -48,9 +48,9 @@ namespace Microsoft.Diagnostics.Tracing.Parsers
     }
 
     [Obsolete]
-    class ThreadIDToProcessIDImpl : IThreadIDToProcessID
+    internal class ThreadIDToProcessIDImpl : IThreadIDToProcessID
     {
-        KernelTraceEventParserState state;
+        private readonly KernelTraceEventParserState state;
         public ThreadIDToProcessIDImpl(KernelTraceEventParserState state)
         {
             this.state = state;
@@ -62,18 +62,10 @@ namespace Microsoft.Diagnostics.Tracing.Parsers
             return res == -1 ? (ProcessID?) null : res;
         }
 
-        public IEnumerable<ThreadIDAndTime> ProcessIDToThreadIDsAndTimes(ProcessID processID)
-        {
-            return from entry in state.threadIDtoProcessID.Entries where entry.Value == processID select new ThreadIDAndTime((ThreadID) entry.Key, entry.StartTime);
-            /*foreach (HistoryDictionary<ThreadID>.HistoryValue entry in state.threadIDtoProcessID.Entries)
-            {
-                if (entry.Value == processID)
-                {
-                    yield return new ThreadIDAndTime((ThreadID) entry.Key, entry.StartTime);
-                }
-            }*/
-            //    from key in state.threadIDtoProcessID.Keys select (ThreadID)key;
-        }
+        public IEnumerable<ThreadIDAndTime> ProcessIDToThreadIDsAndTimes(ProcessID processID) =>
+           from entry in state.threadIDtoProcessID.Entries
+           where entry.Value == processID
+           select new ThreadIDAndTime((ThreadID) entry.Key, entry.StartTime);
     }
 
     /// <summary>
@@ -300,19 +292,13 @@ namespace Microsoft.Diagnostics.Tracing.Parsers
 
         public KernelTraceEventParser(TraceEventSource source) : this(source, DefaultOptionsForSource(source)) { }
 
-        // TODO: use a IReadOnlyHistoryDictionary interface
         [Obsolete]
-        public HistoryDictionary<int> ThreadIDToProcessID =>
+        public IReadOnlyHistoryDictionary<int> ThreadIDToProcessID =>
             State.threadIDtoProcessID;
-
 
         [Obsolete]
         public IThreadIDToProcessID ThreadIDToProcessIDGetter =>
             new ThreadIDToProcessIDImpl(State);
-
-        //[Obsolete]
-        //public HistoryDictionary<string> ProcessIDToProcessName =>
-        //    State.process
 
         public KernelTraceEventParser(TraceEventSource source, ParserTrackingOptions tracking)
             : base(source)

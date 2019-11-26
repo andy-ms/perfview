@@ -7,14 +7,21 @@ using Address = System.UInt64;
 
 namespace Microsoft.Diagnostics.Tracing.Utilities
 {
+    [Obsolete]
+    public interface IReadOnlyHistoryDictionary<T>
+    {
+        bool TryGetValue(Address id, long time, out T value);
+        IEnumerable<Address> Keys { get; }
+        int Count { get; }
+    }
+
     // Utilities for TraceEventParsers
     /// <summary>
     /// A HistoryDictionary is designed to look up 'handles' (pointer sized quantities), that might get reused
     /// over time (eg Process IDs, thread IDs).  Thus it takes a handle AND A TIME, and finds the value
     /// associated with that handle at that time.   
     /// </summary>
-    [Obsolete]
-    public class HistoryDictionary<T>
+    internal class HistoryDictionary<T> : IReadOnlyHistoryDictionary<T>
     {
         public HistoryDictionary(int initialSize)
         {
@@ -153,7 +160,7 @@ namespace Microsoft.Diagnostics.Tracing.Utilities
 #endif
             }
         }
-        public IEnumerable<ulong> Keys =>
+        public IEnumerable<Address> Keys =>
             (from e in Entries select e.Key);
 
         public int Count { get { return count; } }

@@ -538,6 +538,7 @@ namespace Microsoft.Diagnostics.Tracing
             return true;
         }
 
+        [Obsolete]
         public override string ProcessName(int processID, long timeQPC)
         {
             string result;

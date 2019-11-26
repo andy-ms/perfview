@@ -134,6 +134,7 @@ namespace Microsoft.Diagnostics.Tracing
             return true;
         }
 
+        [Obsolete]
         public override string ProcessName(int processID, long time100ns)
         {
             if (!this.processNameForID.TryGetValue(processID, out var ret))
