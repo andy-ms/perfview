@@ -437,7 +437,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 {
                     RecentCpuSamples.Add(new ThreadWorkSpan(data));
                     bool hadHeap = false;
-                    //This was preventing us from getting stolen times from CPU samples. We don't need stacks for that.
+                    //TODO: This was preventing us from getting stolen times from CPU samples. We don't need stacks for that.
                     //if (source.HasMutableTraceEventStackSource())
                     {
                         TraceLoadedDotNetRuntime loadedRuntime = null;
@@ -448,17 +448,10 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                             var proc = pair.Key;
                             var tmpMang = pair.Value;
 
-                            bool print = DEBUG_PRINT_SAMPLE(data.TimeStampRelativeMSec);
-
                             TraceGC e = TraceGarbageCollector.GetCurrentGC(tmpMang, data.TimeStampRelativeMSec);
                             // If we are in the middle of a GC.
                             if (e != null && GCShouldHaveServerGCHeapHistories(tmpMang, e))
                             {
-                                if (print)
-                                {
-                                    Console.WriteLine("GOT A SAMPLE, AND THERE'S A SERVER GC");
-                                }
-
                                 GCStats stats = tmpMang.GC.m_stats;
 
                                 // TODO: old code used processorID as heap ID.
@@ -468,10 +461,6 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                                 {
                                     hadHeap = true;
                                     e.AddServerGcSample(new ThreadWorkSpan(data), heapAndThreadKind: new GCHeapAndThreadKindAndIsNewThread(htk, newThreadIsGC: true));
-                                    if (print)
-                                    {
-                                        Console.WriteLine("Adding working span");
-                                    }
                                 }
 
                                 loadedRuntime = tmpMang;
@@ -482,30 +471,14 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                                     // This is from a different process. So consider it stolen time from this process.
                                     HeapID? heapID = stats.GetHeapIDFromProcessorNumber(data.ProcessorNumber);
 
-                                    if (print)
-                                    {
-                                        Console.WriteLine($"Got sample for processor {data.ProcessorNumber} -- {stats.ShowHeapIDsForProcessorNumber(data.ProcessorNumber)}");
-                                    }
-
                                     if (heapID != null)
                                     {
-                                        if (print)
-                                        {
-                                            Console.WriteLine("Have heap ID");
-                                        }
                                         // TODO: From just the processor number, we can't know what the threadkind should be ...
                                         e.AddServerGcSample(
                                             sample: new ThreadWorkSpan(data),
                                             heapAndThreadKind: new GCHeapAndThreadKindAndIsNewThread(
                                                 heapAndThreadKind: new GCHeapAndThreadKind(heapID: heapID.Value, threadKind: GCThreadKind.Foreground),
                                                 newThreadIsGC: false));
-                                    }
-                                    else
-                                    {
-                                        if (print)
-                                        {
-                                            Console.WriteLine("No heap ID");
-                                        }
                                     }
                                 }
                             }
@@ -1701,10 +1674,6 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
         }
 
         internal const bool DEBUG_PRINT_GC = false;
-        internal const double DEBUG_PRINT_SAMPLE_BEGIN_MSEC = 2802.95;
-        internal const double DEBUG_PRINT_SAMPLE_END_MSEC = 2851.56;
-        internal static bool DEBUG_PRINT_SAMPLE(double timeMSec) =>
-            false && DEBUG_PRINT_SAMPLE_BEGIN_MSEC <= timeMSec && timeMSec <= DEBUG_PRINT_SAMPLE_END_MSEC;
         internal const bool DEBUG_IGNORE_JOINS = false;
         internal const bool DONTUSE_IGNORE_ERRORS = false;
         internal const bool DONTUSE_IGNORE_MISSING_JOIN_EVENTS = false;

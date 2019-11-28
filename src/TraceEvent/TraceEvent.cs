@@ -3442,11 +3442,8 @@ namespace Microsoft.Diagnostics.Tracing
             }
             catch (Exception e)
             {
-                // No idea where the debug.writeline is going to
                 Debug.WriteLine("Error: exception thrown during callback.  Will be swallowed!");
                 Debug.WriteLine("Exception: " + e.Message);
-                Console.WriteLine(e.Message);
-                Console.WriteLine(e.StackTrace);
                 Debug.Assert(false, "Thrown exception " + e.GetType().Name + " '" + e.Message + "'");
             }
 #endif
