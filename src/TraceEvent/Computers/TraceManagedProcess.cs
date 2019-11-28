@@ -826,10 +826,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                         {
                             // After starting a BGC, we may proceed with an ephemeral GC.
                             // This ephemeral GC won't have an associated SuspendEEStart, so we have to create it here instead
-                            if (!DONTUSE_IGNORE_ERRORS)
-                            {
-                                Debug.Assert(stats.GC.m_stats.currentBGC == _gc, "Expect to see a BGC here");
-                            }
+                            Debug.Assert(stats.GC.m_stats.currentBGC == _gc, "Expect to see a BGC here");
                             _gc = AddNewGC(process, stats, isKnownToBeBackground: data.Type == GCType.BackgroundGC, number: data.Count);
                         }
                         _gc.Generation = data.Depth;
@@ -990,7 +987,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                 };
 
                 Dictionary<TraceLoadedDotNetRuntime, TraceGarbageCollector.ManagedProcessJoinState> processJoinStates = new Dictionary<TraceLoadedDotNetRuntime, TraceGarbageCollector.ManagedProcessJoinState>();
-                // TODO: clear entries in this dictionary when we're sure a join is done
+                // TODO: clear entries in this dictionary when we're sure a GC is done (to save memory)
                 Dictionary<TraceGC, TraceGarbageCollector.GCJoinStateFgOrBg> gcJoinStatesFg = new Dictionary<TraceGC, TraceGarbageCollector.GCJoinStateFgOrBg>();
                 Dictionary<TraceGC, TraceGarbageCollector.GCJoinStateFgOrBg> gcJoinStatesBg = new Dictionary<TraceGC, TraceGarbageCollector.GCJoinStateFgOrBg>();
 
@@ -1030,10 +1027,9 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                             AddNewGC(data.Process(), stats, isKnownToBeBackground: false, number: null);
                         }
 
-
                         // Ignore join events until we're on the third GC.
                         // Earlier join events may be incomplete -- it seems like some threads may go missing.
-                        // (Alternative -- keep the events but disable asserts.)
+                        // (An alternative would be to keep the events but disable asserts.)
                         // Also ignore background events if we don't have a BGC yet.
 
                         bool haveEnoughGCs = stats.GC.GCs.Count >= 3;
@@ -1665,7 +1661,6 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
 
         internal const bool DEBUG_PRINT_GC = false;
         internal const bool DEBUG_IGNORE_JOINS = false;
-        internal const bool DONTUSE_IGNORE_ERRORS = false;
         internal const bool DONTUSE_IGNORE_MISSING_JOIN_EVENTS = false;
 
         private static void MaybePrintEvent(TraceEvent te)
@@ -1774,7 +1769,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
             }
         }
 
-        [Obsolete] // allow us to use experimental PerfView features
+        [Obsolete] // Experimental
         public static GCThreadKind? TryGetThreadKindFromJoinStage(GCJoinStage stage)
         {
             switch (stage)
@@ -2329,7 +2324,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     throw new Exception($"Getting a JoinStart for {stage} when we shouldn't");
                 }
 
-                // Apparently we can actually see a join start event come out after the restart end.
+                // Apparently we can actually see a join start event come out after the restart end, so commenting out the following check.
                 //if (CurJoin.SeenRestartEnd)
                 //{
                 //    throw new Exception("Already saw restart end, should not get any more JoinStarts");
@@ -2467,10 +2462,10 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
             return d.TryGetValue(k, out V v) ? v : (V?) null;
         }
 
-        private static string ShowGc(TraceGC gc)
-        {
-            return gc == null ? "null" : $"n: {gc.Number}; hash: {gc.GetHashCode()}; started: {gc.SeenStartEvent}; complete: {gc.IsComplete}; type: {gc.Type}";
-        }
+        private static string ShowGc(TraceGC gc) =>
+            gc == null
+                ? "null"
+                : $"n: {gc.Number}; hash: {gc.GetHashCode()}; started: {gc.SeenStartEvent}; complete: {gc.IsComplete}; type: {gc.Type}";
 
         private static void PrintGCs(TraceLoadedDotNetRuntime proc, IReadOnlyDictionary<TraceGC, GCJoinStateFgOrBg> joinStates, string name, bool showRes, TraceGC res)
         {
@@ -2589,7 +2584,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
             uint heapCount)
         {
             bool bgcIsFinished = proc.GC.m_stats.currentBGC == null;
-            //TODO: don't need currentOrFinishedBGC any more here
+            //TODO: don't need currentOrFinishedBGC any more here?
             TraceGC bgc = proc.GC.m_stats.currentBGC ?? proc.GC.m_stats.currentOrFinishedBGC;
 
             IReadOnlyList<TraceGC> gcs = proc.GC.GCs;
@@ -3992,8 +3987,6 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
                     previousGCStopTimeRelativeMSec = GCs[0].StartRelativeMSec;
                 }
 
-                // Debug.Assert(previousGCStopTimeRelativeMSec <= gc.StartRelativeMSec);
-
                 double totalTime = (gc.StartRelativeMSec + gc.DurationMSec) - previousGCStopTimeRelativeMSec;
                 pauseTimePercentage = (totalPauseTime * 100) / (totalTime);
             }
@@ -4003,7 +3996,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
                 pauseTimePercentage = (gc.PauseDurationMSec * 100) / (totalTime);
             }
 
-            // Debug.Assert(pauseTimePercentage <= 100);
+            Debug.Assert(pauseTimePercentage <= 100);
             return pauseTimePercentage;
         }
 
@@ -4337,6 +4330,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
         }
 
+
         internal void AddServerGCThreadTime(int heapIndex, float cpuMSec)
         {
             if (GCCpuServerGCThreads != null)
@@ -4392,7 +4386,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
             else
             {
-                //TODO: if should be unnecessary?
+                // TODO: Count really should never be 0 here
                 if (ServerGcHeapHistories.Count != 0)
                 {
                     throw new Exception($"Got a join for heap {data.Heap}, but there are only {ServerGcHeapHistories.Count} heap histories");
@@ -5080,7 +5074,6 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
                 //update gc thread priority since we have new data
                 GcWorkingThreadPriority = switchData.Priority;
             }
-            //TODO: also use oldthreadid and oldthreadpriority?
 
             if (lastSpan != null)
             {
@@ -5787,7 +5780,6 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
                 if (proc.GC.m_stats.lastCompletedGC != null)
                 {
                     // TODO: I've seen this fail. No idea why it's supposed to succeed.
-                    // Example failing trace is in desktop/PERFVIEW_ISSUE.
                     // Debug.Assert(proc.GC.m_stats.lastCompletedGC.Type == GCType.BackgroundGC);
                     _event = proc.GC.m_stats.lastCompletedGC;
                 }
@@ -5874,7 +5866,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
                     proc.GC.m_stats.HeapCount = data.NumHeaps;
                 }
 
-                // TODO: REMOVE -- Not necessary, the dictionary always exists
+                // Below is not necessary, the dictionary always exists
                 //if (proc.GC.m_stats.IsServerGCUsed == 1)
                 //{
                 //    proc.GC.m_stats.serverGCThreads = new Dictionary<ThreadID, HeapID>(data.NumHeaps);
@@ -5958,7 +5950,6 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         // This records the amount of CPU time spent at the end of last GC.
         internal double ProcessCpuAtLastGC = 0;
 
-        // TODO: use a BidirectionalDictionary of thread to heap
         internal Dictionary<int, object> backgroundGCThreads = new Dictionary<int, object>();
         internal bool IsBGCThread(int threadID)
         {
@@ -6080,7 +6071,6 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
         #endregion
     }
 
-    //TODO: use a library for this
     class BidirectionalDictionary<A, B> where A : struct where B : struct
     {
         private readonly Dictionary<A, B> a2b = new Dictionary<A, B>();
@@ -6095,23 +6085,27 @@ namespace Microsoft.Diagnostics.Tracing.Analysis.GC
             }
             catch (ArgumentException)
             {
-                Console.WriteLine("a->b:");
-                foreach (var pair in a2b)
+                if (false)
                 {
-                    Console.WriteLine($"{pair.Key} -> {pair.Value}");
+                    Console.WriteLine("a->b:");
+                    foreach (var pair in a2b)
+                    {
+                        Console.WriteLine($"{pair.Key} -> {pair.Value}");
+                    }
+                    Console.WriteLine("b->a:");
+                    foreach (var pair in b2a)
+                    {
+                        Console.WriteLine($"{pair.Key} -> {pair.Value}");
+                    }
+                    Console.WriteLine($"Adding {a} -> {b} failed");
                 }
-                Console.WriteLine("b->a:");
-                foreach (var pair in b2a)
-                {
-                    Console.WriteLine($"{pair.Key} -> {pair.Value}");
-                }
-                Console.WriteLine($"Adding {a} -> {b} failed");
                 throw;
             }
         }
 
         public B? BFromA(A a) =>
             a2b.TryGetValue(a, out B b) ? b : (B?) null;
+
         public A? AFromB(B b) =>
             b2a.TryGetValue(b, out A a) ? a : (A?) null;
     }
