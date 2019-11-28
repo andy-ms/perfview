@@ -4506,7 +4506,7 @@ namespace Microsoft.Diagnostics.Tracing.Parsers.Kernel
             get {
                 int res = GetByteAt(0xc);
                 // Assert it's a valid reason 
-                // TODO: this fails all the time!!!!
+                // TODO: this fails all the time!!
                 // Debug.Assert(res <= (int) ThreadWaitReason.Unknown);
                 return (ThreadWaitReason)res;
             }

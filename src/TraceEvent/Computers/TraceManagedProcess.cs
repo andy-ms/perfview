@@ -454,9 +454,6 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                             {
                                 GCStats stats = tmpMang.GC.m_stats;
 
-                                // TODO: old code used processorID as heap ID.
-                                // This was of course wrong, but allowed us to add an Idle span to a GC thread.
-                                // Now we are only adding working spans.
                                 foreach (GCHeapAndThreadKind htk in stats.GetHeapAndThreadKinds(data.ThreadID))
                                 {
                                     hadHeap = true;
@@ -473,7 +470,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
 
                                     if (heapID != null)
                                     {
-                                        // TODO: From just the processor number, we can't know what the threadkind should be ...
+                                        // TODO: From just the processor number, we can't know what the threadkind should be ... so guessing foreground
                                         e.AddServerGcSample(
                                             sample: new ThreadWorkSpan(data),
                                             heapAndThreadKind: new GCHeapAndThreadKindAndIsNewThread(
@@ -701,7 +698,7 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
                     var stats = currentManagedProcess(data);
                     isEESuspended.Remove(stats);
 
-                    if (data.ThreadID == stats.GC.m_stats.suspendThreadIDOther)
+                    if(data.ThreadID == stats.GC.m_stats.suspendThreadIDOther)
                     {
                         stats.GC.m_stats.suspendThreadIDOther = -1;
                     }
@@ -773,15 +770,8 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
 
                 void FinishUpGC(TraceGC gc, GCStats m_stats)
                 {
-                    //TODO:KILL
-                    if (gc == null)
-                        throw new Exception("GC is null?");
                     foreach (ServerGcHistory hp in gc.ServerGcHeapHistories)
                     {
-                        //TODO:KILL
-                        if (hp == null)
-                            throw new Exception("Heap is null?");
-
                         ThreadID? workingThreadId = m_stats.GetServerGCThreadFromHeap(hp.HeapId);
                         if (workingThreadId != null)
                         {
@@ -2463,15 +2453,6 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
 
         }
 
-        // TODO:KILL (just use .Value)
-        static T NonNull<T>(T? value) where T : struct
-        {
-            if (value == null)
-            {
-                throw new Exception("Value was null");
-            }
-            return value.Value;
-        }
         static T NonNull<T>(T value) where T : class
         {
             if (value == null)
@@ -2716,13 +2697,13 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
             }
             // Only check PrevOrCur here and not prev2 -- we may see the same stage multiple times,
             // so consider a new JoinStart at the same stage as Prev2 to be a new join.
-            else if (NonNull(oldState).HasJoinWithRemainingStarts(joinStage, heapCount))
+            else if (oldState.Value.HasJoinWithRemainingStarts(joinStage, heapCount))
             {
-                joinStates[gc] = NonNull(oldState).WithJoinStart(joinStage, threadID, expectRestart: expectRestart, heapCount: heapCount);
+                joinStates[gc] = oldState.Value.WithJoinStart(joinStage, threadID, expectRestart: expectRestart, heapCount: heapCount);
             }
             else
             {
-                joinStates[gc] = NonNull(oldState).WithNewCur(joinStage, expectRestart, threadID);
+                joinStates[gc] = oldState.Value.WithNewCur(joinStage, expectRestart, threadID);
             }
 
             return gc;
@@ -2814,12 +2795,12 @@ namespace Microsoft.Diagnostics.Tracing.Analysis
         {
             TraceGC retLast()
             {
-                joinStates[last] = NonNull(oldLastState).WithJoinEnd(joinStage);
+                joinStates[last] = oldLastState.Value.WithJoinEnd(joinStage);
                 return last;
             };
             TraceGC retBgc()
             {
-                joinStates[bgc] = NonNull(oldBgcState).WithJoinEnd(joinStage);
+                joinStates[bgc] = oldBgcState.Value.WithJoinEnd(joinStage);
                 return bgc;
             };
 
